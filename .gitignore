@@ -1,0 +1,7 @@
+/target/
+/docs/
+AGENTS.md
+*.local.*
+.env*
+*.db*
+__pycache__/
