@@ -3,7 +3,7 @@ use crate::*;
 use axum::{
     Form, Json, Router,
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode, header::ACCEPT_ENCODING},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -29,6 +29,7 @@ struct Wire {
     refresh_error: bool,
     bad_signature: bool,
     revocation_error: bool,
+    compressed: bool,
 }
 #[derive(Clone)]
 struct Peer {
@@ -95,6 +96,7 @@ impl Fixture {
             auth,
             peer,
             browser: reqwest::Client::builder()
+                .tls_backend_preconfigured(crate::http::tls_config().unwrap())
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .unwrap(),
@@ -158,9 +160,14 @@ async fn discovery(State(peer): State<Peer>) -> Json<Value> {
         json!({"issuer":peer.issuer, "authorization_endpoint":format!("{}/authorize",peer.issuer), "token_endpoint":format!("{}/token",peer.issuer), "jwks_uri":format!("{}/jwks",peer.issuer), "revocation_endpoint":format!("{}/revoke",peer.issuer)}),
     )
 }
-async fn token(State(peer): State<Peer>, Form(form): Form<BTreeMap<String, String>>) -> Response {
+async fn token(
+    State(peer): State<Peer>,
+    headers: HeaderMap,
+    Form(form): Form<BTreeMap<String, String>>,
+) -> Response {
     let wire = &mut *peer.wire.lock().unwrap();
     wire.forms.push(form.clone());
+    wire.compressed |= headers.contains_key(ACCEPT_ENCODING);
     if form["grant_type"] == "refresh_token" {
         peer.refreshes.fetch_add(1, Ordering::SeqCst);
         if wire.refresh_error {
@@ -243,6 +250,8 @@ async fn consent_is_verified_stored_privately_and_resumes_after_restart() {
     .await;
     let account = pending.wait().await.unwrap();
     assert!(account.connected && account.plan_usage);
+    // Uncompressed even though the test build enables reqwest's gzip.
+    assert!(!f.peer.wire.lock().unwrap().compressed);
     assert_eq!(
         f.auth
             .access_token(&account.id)

@@ -10,23 +10,30 @@ publish = false
 include = ["src/**", "tests/**", "examples/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 fs2 = "0.4"
 getrandom = "0.4"
 jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# rustls with the ring provider and the webpki roots, given to reqwest as a
+# configuration: 0.13 has no ring-backed feature.
+reqwest = { version = "0.13", default-features = false, features = ["json", "form", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "macros", "net", "io-util", "sync", "time"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
+webpki-roots = "1"
 zeroize = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 axum = "0.8"
+# gzip, as a host that also links roomkit-tools enables it: requests must still
+# ask for uncompressed answers.
+reqwest = { version = "0.13", default-features = false, features = ["gzip"] }
 
 [lints.rust]
 unsafe_code = "forbid"
