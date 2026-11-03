@@ -9,7 +9,7 @@ use std::{
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
-use crate::{Account, Error, Secret};
+use crate::{Account, Error, Secret, secret::plain};
 
 /// Accounts one directory can hold.
 pub(crate) const MAX_ACCOUNTS: usize = 64;
@@ -40,8 +40,11 @@ pub(crate) struct Record {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Tokens {
+    #[serde(with = "plain")]
     pub access: Secret,
+    #[serde(with = "plain")]
     pub refresh: Secret,
+    #[serde(with = "plain")]
     pub id: Secret,
     pub expires_at: u64,
     pub scopes: Vec<String>,

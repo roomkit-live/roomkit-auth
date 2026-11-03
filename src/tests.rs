@@ -772,3 +772,35 @@ async fn the_account_limit_is_reported_and_only_removal_frees_a_place() {
     f.auth.remove_account(last).await.unwrap();
     assert!(f.auth.sign_in(None).await.is_ok());
 }
+#[tokio::test]
+async fn a_store_written_by_an_earlier_version_still_opens() {
+    let f = Fixture::new().await;
+    let path = f._directory.path().join("auth/accounts.json");
+    let stored = json!({"version":1, "host":"urn:uuid:9a1c5a0e-5d1b-4e2a-8c3f-0d6f2b7e4a11", "accounts":{"local-id":{
+        "id":"local-id", "client_id":"issued-client", "issuer":f.peer.issuer, "subject":"account-one",
+        "email":"person@example.test", "revision":"first",
+        "tokens":{"access":"stored-access", "refresh":"stored-refresh", "id":"stored-id",
+            "expires_at":now().unwrap()+3600, "scopes":SCOPE.split(' ').collect::<Vec<_>>()},
+    }}});
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    serde_json::to_writer(options.open(&path).unwrap(), &stored).unwrap();
+    assert_eq!(f.auth.accounts().unwrap()[0].id, "local-id");
+    assert_eq!(
+        f.auth
+            .access_token("local-id")
+            .await
+            .unwrap()
+            .expose_secret(),
+        "stored-access"
+    );
+    // Writing keeps that format: the file reads back with its values in clear.
+    f.auth.sign_in(Some("local-id")).await.unwrap();
+    let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(written, stored);
+}

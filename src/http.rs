@@ -1,7 +1,7 @@
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header, jwk::JwkSet};
 use serde::{Deserialize, de::DeserializeOwned};
 
-use crate::{Error, Secret};
+use crate::{Error, Secret, secret::plain};
 
 pub(crate) const ISSUER: &str = "https://auth.openai.com";
 pub(crate) const RESOURCE: &str = "https://api.openai.com/v1";
@@ -42,8 +42,11 @@ pub(crate) struct Discovery {
 
 #[derive(Deserialize)]
 pub(crate) struct Grant {
+    #[serde(deserialize_with = "plain::deserialize")]
     pub access_token: Secret,
+    #[serde(default, deserialize_with = "plain::optional")]
     pub refresh_token: Option<Secret>,
+    #[serde(default, deserialize_with = "plain::optional")]
     pub id_token: Option<Secret>,
     pub token_type: String,
     pub expires_in: u64,

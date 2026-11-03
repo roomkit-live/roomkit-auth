@@ -27,7 +27,7 @@ tokio = { version = "1", features = ["rt", "macros", "net", "io-util", "sync", "
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 webpki-roots = "1"
-zeroize = { version = "1", features = ["derive"] }
+zeroize = "1"
 
 [dev-dependencies]
 axum = "0.8"
