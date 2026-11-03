@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT"
-description = "Reusable account authentication for RoomKit applications"
+description = "Reusable account authentication for RoomKit applications: Sign in with ChatGPT for local apps"
 repository = "https://github.com/roomkit-live/roomkit-auth"
-publish = false
+keywords = ["oauth", "chatgpt", "openai", "authentication", "pkce"]
+categories = ["authentication"]
 include = ["src/**", "tests/**", "examples/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
 
 [dependencies]

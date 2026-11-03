@@ -1,0 +1,54 @@
+name: Release
+
+# A vX.Y.Z tag publishes that version once CI passes and the crates-io
+# environment approves. Trusted Publishing cannot create a crate, so 0.1.0 is
+# published by hand and this workflow skips it: see CONTRIBUTING.md.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.check.outputs.published }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check that the tag, the manifest and the changelog agree
+        id: check
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          test "$GITHUB_REF_NAME" = "v$version"
+          grep -qx "## $version" CHANGELOG.md
+          status=$(curl -sS -o /dev/null -w '%{http_code}' -A 'roomkit-auth release workflow' \
+            "https://crates.io/api/v1/crates/roomkit-auth/$version")
+          case "$status" in
+            200) echo "published=true" >> "$GITHUB_OUTPUT" ;;
+            404) echo "published=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "crates.io answered $status" >&2; exit 1 ;;
+          esac
+  publish:
+    needs: [ci, version]
+    if: needs.version.outputs.published == 'false'
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup show active-toolchain
+      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+        id: auth
+      - run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

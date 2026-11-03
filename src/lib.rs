@@ -1,8 +1,4 @@
-//! Reusable authentication for local applications, independent of agents and UI.
-//!
-//! [`ChatGpt`] owns PKCE, verified accounts and token rotation. Hosts open the
-//! browser and supply their actual name. Linux and macOS use owner-only files;
-//! credentials are not encrypted at rest. Protect the application's directory.
+#![doc = include_str!("../README.md")]
 mod error;
 mod http;
 mod loopback;
