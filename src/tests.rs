@@ -804,3 +804,13 @@ async fn a_store_written_by_an_earlier_version_still_opens() {
     let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(written, stored);
 }
+#[tokio::test]
+async fn a_signing_key_outage_during_sign_in_exchanges_no_code() {
+    let f = Fixture::new().await;
+    let (pending, query) = f.start(None).await;
+    f.peer.wire.lock().unwrap().jwks_down = true;
+    let result = f.finish(pending, &query, "issued-client").await;
+    assert_eq!(result.unwrap_err(), Error::Http(503));
+    assert!(f.peer.wire.lock().unwrap().forms.is_empty());
+    assert!(f.auth.accounts().unwrap().is_empty());
+}
