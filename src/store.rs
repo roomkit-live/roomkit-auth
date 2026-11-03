@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Account, Error, Secret};
 
+/// Accounts one directory can hold.
+pub(crate) const MAX_ACCOUNTS: usize = 64;
+
 #[derive(Clone, Debug)]
 pub(crate) struct Store(PathBuf);
 
@@ -42,6 +45,23 @@ pub(crate) struct Tokens {
     pub id: Secret,
     pub expires_at: u64,
     pub scopes: Vec<String>,
+}
+
+impl Data {
+    /// Find the entry for a new sign-in: the one its verified account already
+    /// has, which keeps that account's local ID, or a new one if there is room.
+    pub fn place(&self, mut record: Record) -> Result<Record, Error> {
+        let saved = self
+            .accounts
+            .values()
+            .find(|saved| saved.issuer == record.issuer && saved.subject == record.subject);
+        match saved {
+            Some(saved) => record.id = saved.id.clone(),
+            None if self.accounts.len() >= MAX_ACCOUNTS => return Err(Error::AccountLimit),
+            None => {}
+        }
+        Ok(record)
+    }
 }
 
 impl Record {
@@ -132,7 +152,10 @@ impl Store {
             return Err(Error::Storage);
         }
         let data: Data = serde_json::from_slice(&bytes).map_err(|_| Error::Storage)?;
-        if data.version != 1 || data.accounts.len() > 64 || !data.host.starts_with("urn:uuid:") {
+        if data.version != 1
+            || data.accounts.len() > MAX_ACCOUNTS
+            || !data.host.starts_with("urn:uuid:")
+        {
             return Err(Error::Storage);
         }
         Ok(data)

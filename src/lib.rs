@@ -91,6 +91,8 @@ impl ChatGpt {
     }
     /// Start browser sign-in, optionally reauthorizing a specific account.
     /// Open [`SignIn::url`] and await [`SignIn::wait`]. Drop cancels the listener.
+    /// A new sign-in with an account already saved here updates its entry and
+    /// keeps its ID, so hosts can offer "add an account" without duplicates.
     pub async fn sign_in(&self, account: Option<&str>) -> Result<SignIn, Error> {
         signin::begin(self.clone(), account).await
     }
@@ -111,11 +113,23 @@ impl ChatGpt {
             .await
     }
     /// Revoke refresh credentials, then clear local tokens. Keeps identity and
-    /// client ID for reauthorization. Cleanup survives caller cancellation.
+    /// client ID for reauthorization; [`ChatGpt::remove_account`] deletes them
+    /// too. Cleanup survives caller cancellation.
     pub async fn sign_out(&self, account: &str) -> Result<SignOut, Error> {
         let this = self.clone();
         let account = account.to_owned();
-        tokio::spawn(async move { this.revoke(&account).await })
+        tokio::spawn(async move { this.revoke(&account, false).await })
+            .await
+            .map_err(|_| Error::Cancelled)?
+    }
+    /// Revoke credentials like [`ChatGpt::sign_out`], then delete everything
+    /// stored for this account: tokens, identity, email and client ID. A sign-in
+    /// still pending for it ends in [`Error::Cancelled`]. Signing in again
+    /// registers the account anew under a new ID.
+    pub async fn remove_account(&self, account: &str) -> Result<SignOut, Error> {
+        let this = self.clone();
+        let account = account.to_owned();
+        tokio::spawn(async move { this.revoke(&account, true).await })
             .await
             .map_err(|_| Error::Cancelled)?
     }
@@ -187,7 +201,7 @@ impl ChatGpt {
                 .unwrap_or_else(|| old.scopes.clone()),
         })
     }
-    async fn revoke(&self, account: &str) -> Result<SignOut, Error> {
+    async fn revoke(&self, account: &str, forget: bool) -> Result<SignOut, Error> {
         let _lease = self.inner.store.lock().await?;
         let mut data = self.inner.store.read()?;
         let record = data
@@ -207,8 +221,12 @@ impl ChatGpt {
         } else {
             Ok(())
         };
-        record.tokens = None;
-        record.revision = uuid::Uuid::new_v4().to_string();
+        if forget {
+            data.accounts.remove(account);
+        } else {
+            record.tokens = None;
+            record.revision = uuid::Uuid::new_v4().to_string();
+        }
         self.inner.store.write(&data)?;
         Ok(if result.is_ok() {
             SignOut::Revoked

@@ -37,6 +37,10 @@ pub enum Error {
     /// No connected credential exists or its refresh grant expired.
     #[error("This account needs to sign in again")]
     SignInRequired,
+    /// The directory holds the maximum number of accounts. Signing out keeps an
+    /// account; [`ChatGpt::remove_account`](crate::ChatGpt::remove_account) frees its place.
+    #[error("Too many saved accounts; remove one and try again")]
+    AccountLimit,
     /// Identity was granted but plan usage was not.
     #[error("ChatGPT plan usage is not enabled for this account; sign in to authorize it")]
     PlanUsageRequired,

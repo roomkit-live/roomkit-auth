@@ -148,6 +148,41 @@ impl Fixture {
         .await;
         pending.wait().await.unwrap()
     }
+    async fn finish(
+        &self,
+        pending: SignIn,
+        query: &BTreeMap<String, String>,
+        client: &str,
+    ) -> Result<Account, Error> {
+        // The token endpoint checks the latest authorization request.
+        self.peer.wire.lock().unwrap().queries.push(query.clone());
+        self.callback(
+            query,
+            &[
+                ("state", &query["state"]),
+                ("code", "code"),
+                ("client_id", client),
+            ],
+        )
+        .await;
+        pending.wait().await
+    }
+    fn set_subject(&self, subject: &str) {
+        self.peer
+            .wire
+            .lock()
+            .unwrap()
+            .claims
+            .insert("sub".into(), json!(subject));
+    }
+    fn revocations(&self) -> Vec<BTreeMap<String, String>> {
+        let wire = self.peer.wire.lock().unwrap();
+        wire.forms
+            .iter()
+            .filter(|form| form.contains_key("token_type_hint"))
+            .cloned()
+            .collect()
+    }
     async fn expire(&self, id: &str) {
         let _lease = self.auth.inner.store.lock().await.unwrap();
         let mut data = self.auth.inner.store.read().unwrap();
@@ -612,4 +647,128 @@ async fn a_refresh_cannot_change_the_account_identity() {
         f.auth.access_token(&account.id).await.unwrap_err(),
         Error::Identity
     );
+}
+#[tokio::test]
+async fn signing_in_again_with_a_saved_account_updates_its_entry() {
+    let f = Fixture::new().await;
+    let first = f.login().await;
+    f.expire(&first.id).await;
+    let second = f.login().await;
+    assert_eq!(second.id, first.id);
+    assert_eq!(f.auth.accounts().unwrap(), [second]);
+    // The new tokens replaced the expired ones, so nothing needs refreshing,
+    // and the same registration leaves no other grant to end.
+    assert_eq!(
+        f.auth
+            .access_token(&first.id)
+            .await
+            .unwrap()
+            .expose_secret(),
+        "access-initial"
+    );
+    assert_eq!(f.peer.refreshes.load(Ordering::SeqCst), 0);
+    assert!(f.revocations().is_empty());
+}
+#[tokio::test]
+async fn a_new_registration_for_a_saved_account_ends_the_one_it_replaces() {
+    let f = Fixture::new().await;
+    let first = f.login().await;
+    let (pending, query) = f.start(None).await;
+    let second = f.finish(pending, &query, "second-client").await.unwrap();
+    assert_eq!(second.id, first.id);
+    assert_eq!(f.auth.accounts().unwrap().len(), 1);
+    assert_eq!(
+        f.auth.inner.store.read().unwrap().accounts[&first.id].client_id,
+        "second-client"
+    );
+    // Revocation runs in the background: the sign-in has already succeeded.
+    let mut revocations = f.revocations();
+    for _ in 0..200 {
+        if !revocations.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        revocations = f.revocations();
+    }
+    assert_eq!(revocations.len(), 1);
+    assert_eq!(revocations[0]["client_id"], "issued-client");
+    assert_eq!(revocations[0]["token"], "refresh-initial");
+}
+#[tokio::test]
+async fn removing_an_account_revokes_it_and_forgets_its_identity() {
+    let f = Fixture::new().await;
+    let account = f.login().await;
+    let (pending, query) = f.start(Some(&account.id)).await;
+    assert_eq!(
+        f.auth.remove_account(&account.id).await.unwrap(),
+        SignOut::Revoked
+    );
+    assert_eq!(f.revocations()[0]["token"], "refresh-initial");
+    assert!(f.auth.accounts().unwrap().is_empty());
+    let stored = std::fs::read_to_string(f._directory.path().join("auth/accounts.json")).unwrap();
+    for forgotten in [
+        "person@example.test",
+        "account-one",
+        "issued-client",
+        "refresh-initial",
+    ] {
+        assert!(!stored.contains(forgotten), "{forgotten}");
+    }
+    assert_eq!(
+        f.auth.access_token(&account.id).await.unwrap_err(),
+        Error::SignInRequired
+    );
+    assert_eq!(
+        f.auth.remove_account(&account.id).await.unwrap_err(),
+        Error::SignInRequired
+    );
+    // A sign-in already under way cannot bring the account back.
+    let result = f.finish(pending, &query, "issued-client").await;
+    assert_eq!(result.unwrap_err(), Error::Cancelled);
+    assert!(f.auth.accounts().unwrap().is_empty());
+}
+#[tokio::test]
+async fn removal_reports_an_unconfirmed_revocation_and_still_deletes() {
+    let f = Fixture::new().await;
+    let connected = f.login().await;
+    f.set_subject("account-two");
+    let signed_out = f.login().await;
+    f.auth.sign_out(&signed_out.id).await.unwrap();
+    f.peer.wire.lock().unwrap().revocation_error = true;
+    assert_eq!(
+        f.auth.remove_account(&connected.id).await.unwrap(),
+        SignOut::LocalOnly
+    );
+    assert_eq!(
+        f.auth.remove_account(&signed_out.id).await.unwrap(),
+        SignOut::Revoked
+    );
+    assert!(f.auth.accounts().unwrap().is_empty());
+}
+#[tokio::test]
+async fn the_account_limit_is_reported_and_only_removal_frees_a_place() {
+    let f = Fixture::new().await;
+    let mut accounts = Vec::new();
+    for number in 0..63 {
+        f.set_subject(&format!("account-{number}"));
+        accounts.push(f.login().await);
+    }
+    // Under the limit when it starts, over it when it ends.
+    let (late, late_query) = f.start(None).await;
+    f.set_subject("account-63");
+    accounts.push(f.login().await);
+    f.set_subject("account-64");
+    let error = f
+        .finish(late, &late_query, "late-client")
+        .await
+        .unwrap_err();
+    assert_eq!(error, Error::AccountLimit);
+    assert_eq!(f.auth.accounts().unwrap().len(), 64);
+
+    assert_eq!(f.auth.sign_in(None).await.unwrap_err(), Error::AccountLimit);
+    let last = &accounts[63].id;
+    f.auth.sign_out(last).await.unwrap();
+    assert_eq!(f.auth.sign_in(None).await.unwrap_err(), Error::AccountLimit);
+    f.auth.remove_account(last).await.unwrap();
+    assert!(f.auth.sign_in(None).await.is_ok());
 }
