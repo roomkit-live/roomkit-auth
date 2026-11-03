@@ -153,9 +153,15 @@ impl Http {
         Ok(grant)
     }
 
-    pub async fn identity(
+    /// Fetch the signing keys. Callers do this before spending a code or a
+    /// refresh token, so an outage here costs a retry, never a credential.
+    pub async fn keys(&self, discovery: &Discovery) -> Result<JwkSet, Error> {
+        self.json(self.client.get(&discovery.jwks_uri)).await
+    }
+
+    pub fn identity(
         &self,
-        discovery: &Discovery,
+        keys: &JwkSet,
         token: &Secret,
         client_id: &str,
         nonce: Option<&str>,
@@ -165,7 +171,6 @@ impl Http {
             return Err(Error::Identity);
         }
         let kid = header.kid.ok_or(Error::Identity)?;
-        let keys: JwkSet = self.json(self.client.get(&discovery.jwks_uri)).await?;
         let jwk = keys.find(&kid).ok_or(Error::Identity)?;
         let key = DecodingKey::from_jwk(jwk).map_err(|_| Error::Identity)?;
         let mut validation = Validation::new(Algorithm::RS256);

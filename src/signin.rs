@@ -108,6 +108,7 @@ pub(crate) async fn begin(auth: ChatGpt, account: Option<&str>) -> Result<SignIn
                 (None, Some(id)) if http::text(&id, 256) && id != "dynamic_agent_client" => id,
                 _ => return Err(Error::Identity),
             };
+            let keys = auth.inner.http.keys(&discovery).await?;
             let grant = auth
                 .inner
                 .http
@@ -124,16 +125,12 @@ pub(crate) async fn begin(auth: ChatGpt, account: Option<&str>) -> Result<SignIn
                 )
                 .await?;
             let id_token = grant.id_token.ok_or(Error::Identity)?;
-            let claims = auth
-                .inner
-                .http
-                .identity(
-                    &discovery,
-                    &id_token,
-                    &client_id,
-                    Some(nonce.expose_secret()),
-                )
-                .await?;
+            let claims = auth.inner.http.identity(
+                &keys,
+                &id_token,
+                &client_id,
+                Some(nonce.expose_secret()),
+            )?;
             if existing
                 .as_ref()
                 .is_some_and(|r| r.issuer != auth.inner.http.issuer || r.subject != claims.sub)

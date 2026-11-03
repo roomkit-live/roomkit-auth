@@ -30,6 +30,8 @@ struct Wire {
     bad_signature: bool,
     revocation_error: bool,
     compressed: bool,
+    jwks_down: bool,
+    refresh_returns_identity: bool,
 }
 #[derive(Clone)]
 struct Peer {
@@ -63,11 +65,15 @@ impl Fixture {
             .route("/.well-known/openid-configuration", get(discovery))
             .route(
                 "/jwks",
-                get(|| async {
+                get(|State(peer): State<Peer>| async move {
+                    if peer.wire.lock().unwrap().jwks_down {
+                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                    }
                     Json(
                         serde_json::from_str::<Value>(include_str!("../tests/fixtures/jwks.json"))
                             .unwrap(),
                     )
+                    .into_response()
                 }),
             )
             .route("/api/accounts/oauth/token", post(token))
@@ -183,6 +189,13 @@ async fn token(
         if let Some(scope) = &wire.scope {
             response["scope"] = scope.clone().into();
         }
+        if wire.refresh_returns_identity {
+            let mut claims = json!({"iss":peer.issuer, "sub":"account-one", "aud":form["client_id"], "exp": now().unwrap()+3600});
+            for (k, v) in &wire.claims {
+                claims[k] = v.clone();
+            }
+            response["id_token"] = signed(&claims).into();
+        }
         return Json(response).into_response();
     }
     let query = wire.queries.last().unwrap();
@@ -197,20 +210,23 @@ async fn token(
     for (k, v) in &wire.claims {
         claims[k] = v.clone();
     }
-    let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some("fixture".into());
-    let mut id = jsonwebtoken::encode(
-        &header,
-        &claims,
-        &EncodingKey::from_rsa_der(include_bytes!("../tests/fixtures/test-only-rsa.der")),
-    )
-    .unwrap();
+    let mut id = signed(&claims);
     if wire.bad_signature {
         let dot = id.rfind('.').unwrap() + 1;
         let replacement = if &id[dot..dot + 1] == "A" { "B" } else { "A" };
         id.replace_range(dot..dot + 1, replacement);
     }
     Json(json!({"access_token":"access-initial","refresh_token":"refresh-initial","id_token":id,"token_type":"Bearer","expires_in":3600,"scope":wire.scope.as_deref().unwrap_or(SCOPE)})).into_response()
+}
+fn signed(claims: &Value) -> String {
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some("fixture".into());
+    jsonwebtoken::encode(
+        &header,
+        claims,
+        &EncodingKey::from_rsa_der(include_bytes!("../tests/fixtures/test-only-rsa.der")),
+    )
+    .unwrap()
 }
 async fn revoke(State(peer): State<Peer>, Form(form): Form<BTreeMap<String, String>>) -> Response {
     let wire = &mut *peer.wire.lock().unwrap();
@@ -545,5 +561,55 @@ async fn a_refresh_scope_downgrade_is_persisted_without_returning_access() {
             .refresh
             .expose_secret(),
         "refresh-rotated"
+    );
+}
+#[tokio::test]
+async fn a_signing_key_outage_leaves_the_refresh_token_unspent() {
+    let f = Fixture::new().await;
+    let account = f.login().await;
+    f.expire(&account.id).await;
+    {
+        let mut wire = f.peer.wire.lock().unwrap();
+        wire.refresh_returns_identity = true;
+        wire.jwks_down = true;
+    }
+    assert_eq!(
+        f.auth.access_token(&account.id).await.unwrap_err(),
+        Error::Http(503)
+    );
+    // The service rotates on use: spending the token here would lose it.
+    assert_eq!(f.peer.refreshes.load(Ordering::SeqCst), 0);
+    f.peer.wire.lock().unwrap().jwks_down = false;
+    assert_eq!(
+        f.auth
+            .access_token(&account.id)
+            .await
+            .unwrap()
+            .expose_secret(),
+        "access-rotated"
+    );
+    assert_eq!(
+        f.auth.inner.store.read().unwrap().accounts[&account.id]
+            .tokens
+            .as_ref()
+            .unwrap()
+            .refresh
+            .expose_secret(),
+        "refresh-rotated"
+    );
+}
+#[tokio::test]
+async fn a_refresh_cannot_change_the_account_identity() {
+    let f = Fixture::new().await;
+    let account = f.login().await;
+    f.expire(&account.id).await;
+    {
+        let mut wire = f.peer.wire.lock().unwrap();
+        wire.refresh_returns_identity = true;
+        wire.claims.insert("sub".into(), json!("account-two"));
+    }
+    assert_eq!(
+        f.auth.access_token(&account.id).await.unwrap_err(),
+        Error::Identity
     );
 }

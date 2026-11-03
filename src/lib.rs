@@ -18,7 +18,7 @@ use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
-use store::{Store, Tokens};
+use store::{Record, Store, Tokens};
 
 /// Trusted inference root. Never forward these tokens to a configurable URL.
 pub const CHATGPT_API_ROOT: &str = http::RESOURCE;
@@ -133,21 +133,7 @@ impl ChatGpt {
         if old.expires_at > now()?.saturating_add(60) {
             return Ok(old.access.clone());
         }
-        let discovery = self.inner.http.discovery().await?;
-        let grant = self
-            .inner
-            .http
-            .grant(
-                &discovery,
-                &[
-                    ("grant_type", "refresh_token"),
-                    ("client_id", &record.client_id),
-                    ("refresh_token", old.refresh.expose_secret()),
-                    ("resource", &self.inner.http.resource),
-                ],
-            )
-            .await;
-        let grant = match grant {
+        let tokens = match self.rotate(record, old).await {
             Err(Error::SignInRequired) => {
                 record.tokens = None;
                 record.revision = uuid::Uuid::new_v4().to_string();
@@ -155,26 +141,6 @@ impl ChatGpt {
                 return Err(Error::SignInRequired);
             }
             other => other?,
-        };
-        if let Some(id) = &grant.id_token {
-            let claims = self
-                .inner
-                .http
-                .identity(&discovery, id, &record.client_id, None)
-                .await?;
-            if claims.sub != record.subject {
-                return Err(Error::Identity);
-            }
-        }
-        let tokens = Tokens {
-            access: grant.access_token,
-            refresh: grant.refresh_token.unwrap_or_else(|| old.refresh.clone()),
-            id: grant.id_token.unwrap_or_else(|| old.id.clone()),
-            expires_at: now()?.saturating_add(grant.expires_in),
-            scopes: grant
-                .scope
-                .map(|s| scopes(&s))
-                .unwrap_or_else(|| old.scopes.clone()),
         };
         let result = if tokens.plan_usage() {
             Ok(tokens.access.clone())
@@ -185,6 +151,41 @@ impl ChatGpt {
         record.revision = uuid::Uuid::new_v4().to_string();
         self.inner.store.write(&data)?;
         result
+    }
+    /// Spend the refresh token. The service rotates it on use, so everything
+    /// that can fail on the network happens first: after the grant, only local
+    /// verification stands between the new tokens and the store.
+    async fn rotate(&self, record: &Record, old: &Tokens) -> Result<Tokens, Error> {
+        let http = &self.inner.http;
+        let discovery = http.discovery().await?;
+        let keys = http.keys(&discovery).await?;
+        let grant = http
+            .grant(
+                &discovery,
+                &[
+                    ("grant_type", "refresh_token"),
+                    ("client_id", &record.client_id),
+                    ("refresh_token", old.refresh.expose_secret()),
+                    ("resource", &http.resource),
+                ],
+            )
+            .await?;
+        if let Some(id) = &grant.id_token {
+            let claims = http.identity(&keys, id, &record.client_id, None)?;
+            if claims.sub != record.subject {
+                return Err(Error::Identity);
+            }
+        }
+        Ok(Tokens {
+            access: grant.access_token,
+            refresh: grant.refresh_token.unwrap_or_else(|| old.refresh.clone()),
+            id: grant.id_token.unwrap_or_else(|| old.id.clone()),
+            expires_at: now()?.saturating_add(grant.expires_in),
+            scopes: grant
+                .scope
+                .map(|s| scopes(&s))
+                .unwrap_or_else(|| old.scopes.clone()),
+        })
     }
     async fn revoke(&self, account: &str) -> Result<SignOut, Error> {
         let _lease = self.inner.store.lock().await?;
