@@ -1,8 +1,10 @@
 name: Release
 
 # A vX.Y.Z tag publishes that version once CI passes and the crates-io
-# environment approves. Trusted Publishing cannot create a crate, so 0.1.0 is
-# published by hand and this workflow skips it: see CONTRIBUTING.md.
+# environment approves. A tag runs the workflow of its own commit, so the checks
+# here catch mistakes; the environment and a tag ruleset are the control. Trusted
+# Publishing cannot create a crate, so 0.1.0 is published by hand and this
+# workflow skips it: see CONTRIBUTING.md.
 on:
   push:
     tags: ["v*.*.*"]
@@ -20,10 +22,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
-      - name: Check that the tag, the manifest and the changelog agree
+      - name: Check that the tag is on main, and agrees with the manifest and the changelog
         id: check
         run: |
+          # The full ref: this checkout fetches every tag, and a tag named
+          # origin/main would win over the short name.
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml)
           test "$GITHUB_REF_NAME" = "v$version"
           grep -qx "## $version" CHANGELOG.md
