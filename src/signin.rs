@@ -156,7 +156,7 @@ pub(crate) async fn begin(auth: ChatGpt, account: Option<&str>) -> Result<SignIn
                     scopes: scopes(&grant.scope.ok_or(Error::Protocol)?),
                 }),
             };
-            save(&auth, existing.as_ref(), record, discovery).await
+            save(&auth, existing.as_ref(), record).await
         })
         .await
         .map_err(|_| Error::Timeout)?
@@ -169,13 +169,8 @@ pub(crate) async fn begin(auth: ChatGpt, account: Option<&str>) -> Result<SignIn
 
 /// Store a verified sign-in. A reauthorization updates the entry it started
 /// from, unless that entry changed meanwhile; a new sign-in takes the entry of
-/// its account if it has one, so signing in twice never duplicates an account.
-async fn save(
-    auth: &ChatGpt,
-    existing: Option<&Record>,
-    record: Record,
-    discovery: http::Discovery,
-) -> Result<Account, Error> {
+/// its registration if it has one, and never touches another registration's.
+async fn save(auth: &ChatGpt, existing: Option<&Record>, record: Record) -> Result<Account, Error> {
     let _lease = auth.inner.store.lock().await?;
     let mut data = auth.inner.store.read()?;
     let record = match existing {
@@ -189,30 +184,9 @@ async fn save(
         None => data.place(record)?,
     };
     let account = record.account();
-    let client_id = record.client_id.clone();
-    let replaced = data.accounts.insert(record.id.clone(), record);
+    data.accounts.insert(record.id.clone(), record);
     auth.inner.store.write(&data)?;
-    if let Some(replaced) = replaced.filter(|old| old.client_id != client_id) {
-        end_replaced_grant(auth, discovery, replaced);
-    }
     Ok(account)
-}
-
-/// Once its token is replaced, nothing here can use or revoke a replaced
-/// registration's grant, so ask the service to end it. Best effort and in the
-/// background: the sign-in has already succeeded.
-fn end_replaced_grant(auth: &ChatGpt, discovery: http::Discovery, replaced: Record) {
-    let Some(tokens) = replaced.tokens else {
-        return;
-    };
-    let auth = auth.clone();
-    tokio::spawn(async move {
-        let _ = auth
-            .inner
-            .http
-            .revoke(&discovery, &replaced.client_id, &tokens.refresh)
-            .await;
-    });
 }
 
 fn random() -> Result<String, Error> {

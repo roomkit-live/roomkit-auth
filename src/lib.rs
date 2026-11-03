@@ -89,8 +89,9 @@ impl ChatGpt {
     }
     /// Start browser sign-in, optionally reauthorizing a specific account.
     /// Open [`SignIn::url`] and await [`SignIn::wait`]. Drop cancels the listener.
-    /// A new sign-in with an account already saved here updates its entry and
-    /// keeps its ID, so hosts can offer "add an account" without duplicates.
+    /// A new sign-in that the service ties to a saved registration, with the same
+    /// verified subject and issued client ID, updates its entry and keeps its ID.
+    /// Another registration of one login, such as another workspace, keeps its own.
     pub async fn sign_in(&self, account: Option<&str>) -> Result<SignIn, Error> {
         signin::begin(self.clone(), account).await
     }

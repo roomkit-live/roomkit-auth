@@ -676,29 +676,22 @@ async fn signing_in_again_with_a_saved_account_updates_its_entry() {
     assert!(f.revocations().is_empty());
 }
 #[tokio::test]
-async fn a_new_registration_for_a_saved_account_ends_the_one_it_replaces() {
+async fn another_registration_of_one_login_keeps_its_own_entry() {
     let f = Fixture::new().await;
     let first = f.login().await;
     let (pending, query) = f.start(None).await;
     let second = f.finish(pending, &query, "second-client").await.unwrap();
-    assert_eq!(second.id, first.id);
-    assert_eq!(f.auth.accounts().unwrap().len(), 1);
-    assert_eq!(
-        f.auth.inner.store.read().unwrap().accounts[&first.id].client_id,
-        "second-client"
-    );
-    // Revocation runs in the background: the sign-in has already succeeded.
-    let mut revocations = f.revocations();
-    for _ in 0..200 {
-        if !revocations.is_empty() {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        revocations = f.revocations();
-    }
-    assert_eq!(revocations.len(), 1);
-    assert_eq!(revocations[0]["client_id"], "issued-client");
-    assert_eq!(revocations[0]["token"], "refresh-initial");
+    assert_ne!(second.id, first.id);
+    assert_eq!(f.auth.accounts().unwrap().len(), 2);
+    let data = f.auth.inner.store.read().unwrap();
+    assert_eq!(data.accounts[&first.id].client_id, "issued-client");
+    assert_eq!(data.accounts[&second.id].client_id, "second-client");
+    assert!(data.accounts[&first.id].tokens.is_some());
+    assert!(f.revocations().is_empty());
+    // Signing out of one ends its own grant and leaves the other connected.
+    f.auth.sign_out(&first.id).await.unwrap();
+    assert_eq!(f.revocations()[0]["client_id"], "issued-client");
+    assert!(f.auth.access_token(&second.id).await.is_ok());
 }
 #[tokio::test]
 async fn removing_an_account_revokes_it_and_forgets_its_identity() {

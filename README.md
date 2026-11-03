@@ -11,8 +11,10 @@ The initial provider implements [Sign in with ChatGPT for local applications](ht
   installation ID, PKCE, state, nonce and a loopback callback.
 - Signed ID-token verification (RS256/JWKS, issuer, audience, expiry, nonce and
   verified subject). Reauthorization cannot replace another account's identity.
-- One entry per account, with separate registrations and grants, including
-  identity-only authorization. Signing in again updates the entry and keeps its ID.
+- One entry per registration, with separate grants, including identity-only
+  authorization. A registration is the verified subject with the issued client
+  ID: signing in again under it updates the entry and keeps its ID, and another
+  registration of one login, such as another workspace, keeps its own entry.
 - Refresh before expiry, rotation persisted atomically under a cross-process
   lock, and revocation with explicit reporting when only local sign-out succeeds.
 - Account-specific model discovery from the public API, preserving server order.

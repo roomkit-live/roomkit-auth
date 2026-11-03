@@ -51,13 +51,16 @@ pub(crate) struct Tokens {
 }
 
 impl Data {
-    /// Find the entry for a new sign-in: the one its verified account already
-    /// has, which keeps that account's local ID, or a new one if there is room.
+    /// Find the entry for a new sign-in: the one its registration already has,
+    /// which keeps its local ID, or a new one if there is room. A registration
+    /// is the verified subject with the issued client ID: a subject does not
+    /// identify a workspace, so one login can hold several.
     pub fn place(&self, mut record: Record) -> Result<Record, Error> {
-        let saved = self
-            .accounts
-            .values()
-            .find(|saved| saved.issuer == record.issuer && saved.subject == record.subject);
+        let saved = self.accounts.values().find(|saved| {
+            saved.issuer == record.issuer
+                && saved.subject == record.subject
+                && saved.client_id == record.client_id
+        });
         match saved {
             Some(saved) => record.id = saved.id.clone(),
             None if self.accounts.len() >= MAX_ACCOUNTS => return Err(Error::AccountLimit),
