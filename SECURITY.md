@@ -37,6 +37,9 @@ listener are treated as untrusted. Reports of particular interest include:
 
 Some limits are known and are not vulnerabilities by themselves. Credentials are
 stored unencrypted, so any process running as the same user can read them. Any
-local process can delay a sign-in by holding connections open on the listener,
-but cannot complete one. Protecting the machine and the state directory is the
-host application's responsibility.
+local process can delay a sign-in by holding connections open on the listener.
+The URL from `SignIn::url` can be replayed while its attempt is pending and
+reveals the attempt's state and ID token hint, so a local process that reads it,
+for example from a browser's command line, can tamper with that attempt.
+Protecting the machine and the state directory is the host application's
+responsibility.

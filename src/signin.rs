@@ -13,7 +13,9 @@ pub struct SignIn {
     task: Option<JoinHandle<Result<Account, Error>>>,
 }
 impl SignIn {
-    /// Loopback URL to open; contains no token, identity hint or code.
+    /// Loopback URL to open; contains no token, identity hint or code. Keep it
+    /// out of logs: until the attempt ends, it can be replayed and redirects to
+    /// the authorization request, which carries the attempt's state and hint.
     pub fn url(&self) -> &url::Url {
         &self.url
     }

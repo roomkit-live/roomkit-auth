@@ -6,6 +6,8 @@ mod secret;
 mod signin;
 mod store;
 
+use jsonwebtoken::jwk::JwkSet;
+
 pub use error::Error;
 pub use secret::Secret;
 pub use signin::SignIn;
@@ -143,12 +145,18 @@ impl ChatGpt {
         if old.expires_at > now()?.saturating_add(60) {
             return Ok(old.access.clone());
         }
-        let tokens = match self.rotate(record, old).await {
-            Err(Error::SignInRequired) => {
+        // Whatever fails up to here leaves the refresh token unspent.
+        let http = &self.inner.http;
+        let discovery = http.discovery().await?;
+        let keys = http.keys(&discovery).await?;
+        let tokens = match self.rotate(record, old, &discovery, &keys).await {
+            // Unusable, or spent on an identity that failed verification:
+            // keeping it would only replay it.
+            Err(error @ (Error::SignInRequired | Error::Identity)) => {
                 record.tokens = None;
                 record.revision = uuid::Uuid::new_v4().to_string();
                 self.inner.store.write(&data)?;
-                return Err(Error::SignInRequired);
+                return Err(error);
             }
             other => other?,
         };
@@ -162,16 +170,20 @@ impl ChatGpt {
         self.inner.store.write(&data)?;
         result
     }
-    /// Spend the refresh token. The service rotates it on use, so everything
-    /// that can fail on the network happens first: after the grant, only local
+    /// Spend the refresh token. The service rotates it on use, so the caller
+    /// fetches what can fail on the network first: after the grant, only local
     /// verification stands between the new tokens and the store.
-    async fn rotate(&self, record: &Record, old: &Tokens) -> Result<Tokens, Error> {
+    async fn rotate(
+        &self,
+        record: &Record,
+        old: &Tokens,
+        discovery: &http::Discovery,
+        keys: &JwkSet,
+    ) -> Result<Tokens, Error> {
         let http = &self.inner.http;
-        let discovery = http.discovery().await?;
-        let keys = http.keys(&discovery).await?;
         let grant = http
             .grant(
-                &discovery,
+                discovery,
                 &[
                     ("grant_type", "refresh_token"),
                     ("client_id", &record.client_id),
@@ -181,7 +193,7 @@ impl ChatGpt {
             )
             .await?;
         if let Some(id) = &grant.id_token {
-            let claims = http.identity(&keys, id, &record.client_id, None)?;
+            let claims = http.identity(keys, id, &record.client_id, None)?;
             if claims.sub != record.subject {
                 return Err(Error::Identity);
             }

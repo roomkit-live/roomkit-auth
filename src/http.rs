@@ -6,6 +6,16 @@ use crate::{Error, Secret, secret::plain};
 pub(crate) const ISSUER: &str = "https://auth.openai.com";
 pub(crate) const RESOURCE: &str = "https://api.openai.com/v1";
 
+/// The codes OpenAI lists under "Unusable refresh token".
+const UNUSABLE_TOKEN: [&str; 6] = [
+    "invalid_grant",
+    "invalid_refresh_token",
+    "token_expired",
+    "refresh_token_expired",
+    "refresh_token_invalidated",
+    "refresh_token_reused",
+];
+
 /// TLS with rustls's ring provider and the webpki roots: the same trust on
 /// every host, and no system TLS library. HTTP/1.1 is offered by ALPN, as
 /// reqwest's own rustls configuration does.
@@ -131,13 +141,11 @@ impl Http {
         if !status.is_success() {
             let body = body(response, 65_536).await?;
             let error: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
-            return Err(
-                if error.get("error").and_then(|e| e.as_str()) == Some("invalid_grant") {
-                    Error::SignInRequired
-                } else {
-                    Error::Http(status.as_u16())
-                },
-            );
+            return Err(if token_unusable(&error) {
+                Error::SignInRequired
+            } else {
+                Error::Http(status.as_u16())
+            });
         }
         let bytes = body(response, 65_536).await?;
         let grant: Grant = serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
@@ -282,6 +290,16 @@ impl Http {
         }
         serde_json::from_slice(&body(response, 1_048_576).await?).map_err(|_| Error::Protocol)
     }
+}
+
+/// OpenAI documents the codes but not the JSON around them, so this reads both
+/// OAuth's `error` string and the `error.code` of its other APIs.
+fn token_unusable(body: &serde_json::Value) -> bool {
+    let error = body.get("error");
+    let code = error
+        .and_then(|error| error.as_str())
+        .or_else(|| error?.get("code")?.as_str());
+    code.is_some_and(|code| UNUSABLE_TOKEN.contains(&code))
 }
 
 async fn body(

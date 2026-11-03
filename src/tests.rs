@@ -32,6 +32,8 @@ struct Wire {
     compressed: bool,
     jwks_down: bool,
     refresh_returns_identity: bool,
+    refresh_failure: Option<Value>,
+    discovery_issuer: Option<String>,
 }
 #[derive(Clone)]
 struct Peer {
@@ -197,8 +199,9 @@ impl Fixture {
     }
 }
 async fn discovery(State(peer): State<Peer>) -> Json<Value> {
+    let issuer = peer.wire.lock().unwrap().discovery_issuer.clone();
     Json(
-        json!({"issuer":peer.issuer, "authorization_endpoint":format!("{}/authorize",peer.issuer), "token_endpoint":format!("{}/token",peer.issuer), "jwks_uri":format!("{}/jwks",peer.issuer), "revocation_endpoint":format!("{}/revoke",peer.issuer)}),
+        json!({"issuer":issuer.as_ref().unwrap_or(&peer.issuer), "authorization_endpoint":format!("{}/authorize",peer.issuer), "token_endpoint":format!("{}/token",peer.issuer), "jwks_uri":format!("{}/jwks",peer.issuer), "revocation_endpoint":format!("{}/revoke",peer.issuer)}),
     )
 }
 async fn token(
@@ -211,6 +214,9 @@ async fn token(
     wire.compressed |= headers.contains_key(ACCEPT_ENCODING);
     if form["grant_type"] == "refresh_token" {
         peer.refreshes.fetch_add(1, Ordering::SeqCst);
+        if let Some(body) = &wire.refresh_failure {
+            return (StatusCode::BAD_REQUEST, Json(body.clone())).into_response();
+        }
         if wire.refresh_error {
             return (
                 StatusCode::BAD_REQUEST,
@@ -813,4 +819,75 @@ async fn a_signing_key_outage_during_sign_in_exchanges_no_code() {
     assert_eq!(result.unwrap_err(), Error::Http(503));
     assert!(f.peer.wire.lock().unwrap().forms.is_empty());
     assert!(f.auth.accounts().unwrap().is_empty());
+}
+#[tokio::test]
+async fn every_documented_unusable_refresh_token_asks_for_a_new_sign_in() {
+    for code in [
+        "invalid_grant",
+        "invalid_refresh_token",
+        "token_expired",
+        "refresh_token_expired",
+        "refresh_token_invalidated",
+        "refresh_token_reused",
+    ] {
+        // OpenAI lists the codes without the JSON around them.
+        for body in [
+            json!({"error": code}),
+            json!({"error": {"code": code, "message": "secret-echo"}}),
+        ] {
+            let f = Fixture::new().await;
+            let account = f.login().await;
+            f.expire(&account.id).await;
+            f.peer.wire.lock().unwrap().refresh_failure = Some(body);
+            let error = f.auth.access_token(&account.id).await.unwrap_err();
+            assert_eq!(error, Error::SignInRequired, "{code}");
+            assert!(!f.auth.accounts().unwrap()[0].connected, "{code}");
+        }
+    }
+}
+#[tokio::test]
+async fn other_refresh_failures_keep_the_credentials() {
+    for body in [
+        json!({"error": "invalid_client"}),
+        json!({"error": {"code": "server_error"}}),
+        json!("not an object"),
+    ] {
+        let f = Fixture::new().await;
+        let account = f.login().await;
+        f.expire(&account.id).await;
+        f.peer.wire.lock().unwrap().refresh_failure = Some(body.clone());
+        let error = f.auth.access_token(&account.id).await.unwrap_err();
+        assert_eq!(error, Error::Http(400), "{body}");
+        assert!(f.auth.accounts().unwrap()[0].connected, "{body}");
+    }
+}
+#[tokio::test]
+async fn a_failed_identity_check_after_a_refresh_never_replays_the_spent_token() {
+    for (claim, value) in [("sub", json!("account-two")), ("exp", json!(1))] {
+        let f = Fixture::new().await;
+        let account = f.login().await;
+        f.expire(&account.id).await;
+        {
+            let mut wire = f.peer.wire.lock().unwrap();
+            wire.refresh_returns_identity = true;
+            wire.claims.insert(claim.into(), value);
+        }
+        let error = f.auth.access_token(&account.id).await.unwrap_err();
+        assert_eq!(error, Error::Identity, "{claim}");
+        assert!(!f.auth.accounts().unwrap()[0].connected, "{claim}");
+        let error = f.auth.access_token(&account.id).await.unwrap_err();
+        assert_eq!(error, Error::SignInRequired, "{claim}");
+        assert_eq!(f.peer.refreshes.load(Ordering::SeqCst), 1, "{claim}");
+    }
+}
+#[tokio::test]
+async fn an_identity_error_before_the_refresh_keeps_the_unspent_token() {
+    let f = Fixture::new().await;
+    let account = f.login().await;
+    f.expire(&account.id).await;
+    f.peer.wire.lock().unwrap().discovery_issuer = Some("https://wrong.example".into());
+    let error = f.auth.access_token(&account.id).await.unwrap_err();
+    assert_eq!(error, Error::Identity);
+    assert_eq!(f.peer.refreshes.load(Ordering::SeqCst), 0);
+    assert!(f.auth.accounts().unwrap()[0].connected);
 }
