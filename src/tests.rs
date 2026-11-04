@@ -884,3 +884,21 @@ async fn an_identity_error_before_the_refresh_keeps_the_unspent_token() {
     assert_eq!(f.peer.refreshes.load(Ordering::SeqCst), 0);
     assert!(f.auth.accounts().unwrap()[0].connected);
 }
+#[tokio::test]
+async fn enabling_plan_usage_after_declining_it_asks_for_consent_again() {
+    let f = Fixture::new().await;
+    f.peer.wire.lock().unwrap().scope = Some("openid profile email".into());
+    let account = f.login().await;
+    assert!(!account.plan_usage);
+    let (pending, query) = f.start(Some(&account.id)).await;
+    assert_eq!(query["prompt"], "consent");
+    assert_eq!(query["scope"], SCOPE);
+    f.peer.wire.lock().unwrap().scope = None;
+    let account = f.finish(pending, &query, "issued-client").await.unwrap();
+    assert!(account.plan_usage);
+    // An ordinary sign-in again does not force the consent screen.
+    let (_pending, query) = f.start(Some(&account.id)).await;
+    assert!(!query.contains_key("prompt"));
+    let (_pending, query) = f.start(None).await;
+    assert!(!query.contains_key("prompt"));
+}

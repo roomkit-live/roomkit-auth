@@ -91,6 +91,11 @@ pub(crate) async fn begin(auth: ChatGpt, account: Option<&str>) -> Result<SignIn
         if let Some(record) = &existing {
             if let Some(tokens) = &record.tokens {
                 query.append_pair("id_token_hint", tokens.id.expose_secret());
+                // A returning sign-in shows no consent screen, so a person who
+                // declined plan usage could otherwise never grant it.
+                if !tokens.plan_usage() {
+                    query.append_pair("prompt", "consent");
+                }
             }
             if let Some(email) = &record.email {
                 query.append_pair("login_hint", email);
