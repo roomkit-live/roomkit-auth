@@ -39,8 +39,8 @@ It does not fit:
   [interest form](https://openai.com/form/sign-in-with-chatgpt-interest/) first;
 - **a machine without a local browser:** the sign-in returns to a listener on
   `127.0.0.1`, and there is no device-code flow;
-- **Windows:** only Linux and macOS are supported. Elsewhere, `ChatGpt::new`
-  returns `Error::Storage`.
+- **Windows:** `ChatGpt::new` returns `Error::Storage`. Linux and macOS are the
+  supported platforms.
 
 ## Install
 
@@ -53,7 +53,8 @@ This needs Rust 1.92 or newer and a C compiler for the cryptography libraries.
 
 ## Quick start
 
-This complete program signs in once, then reuses the saved account on later runs:
+This complete program signs in once, then reuses the saved account on later runs.
+Your application opens the browser itself: the crate only gives it the URL.
 
 ```rust,no_run
 use roomkit_auth::ChatGpt;
@@ -88,16 +89,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+Three things to know when you adapt it:
+
+- **The directory must be private.** `ChatGpt::new` creates it with mode `0700` if
+  it is missing, and refuses an existing one that group or others can access. So
+  use a dedicated directory inside your application's state directory, not a
+  shared one such as `~/.config`.
+- **Credentials can stop working.** `access_token` then returns
+  `Error::SignInRequired`: run `sign_in` again.
+- **People can refuse plan usage.** Plan usage is the permission to make requests
+  on their ChatGPT plan, and they can sign in without granting it. `wait()` still
+  succeeds, with `account.plan_usage` set to `false`, and `models` and
+  `access_token` return `Error::PlanUsageRequired`.
+
 To try the flow from a clone of this repository, run
 `cargo run --example sign_in -- /private/state/auth`. It signs in for real and
 lists your models. The automated tests never contact OpenAI: they use a local fake
 issuer and a clearly marked, public test signing key.
 
+## How it works
+
+1. `sign_in` starts a listener on `127.0.0.1` and returns a local URL, which your
+   application opens in the browser or shows to the person.
+2. That URL redirects to OpenAI. The person signs in and approves your application
+   under the name you gave, which they can edit. On a first sign-in, OpenAI issues
+   a client ID for your application: this is a *registration*.
+3. OpenAI sends the browser back to the listener. The crate exchanges the code for
+   tokens, verifies the identity in the signed ID token and saves the account, and
+   `wait()` returns it.
+4. Before each model request, `access_token` returns a valid access token. When it
+   renews one, OpenAI also replaces the refresh token, and the crate saves the new
+   one under a lock that processes sharing the directory respect.
+
 ## Make a model request
 
 The crate stops at the token. Send model requests to the
 [Responses API](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
-yourself, with `store: false` and `stream: true`, as this flow requires:
+yourself, with `store: false` and `stream: true`, as this flow requires. The root
+is `roomkit_auth::CHATGPT_API_ROOT`, and `$ACCESS_TOKEN` stands for
+`token.expose_secret()`:
 
 ```sh
 curl --no-buffer https://api.openai.com/v1/responses \
@@ -112,7 +142,10 @@ curl --no-buffer https://api.openai.com/v1/responses \
 ```
 
 Which models exist depends on the signed-in account, so list them with
-`models()` instead of hard-coding one.
+`models()` instead of hard-coding one. OpenAI documents the [errors these requests
+can return](https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery),
+such as a 403 when plan usage is unavailable for the user and a 429 at the usage
+limit, and what to do about each.
 
 ## API overview
 
@@ -120,22 +153,26 @@ Which models exist depends on the signed-in account, so list them with
 | --- | --- |
 | `ChatGpt::new(directory, app_name)` | Opens the private directory, creating it if needed. No network access. |
 | `accounts()` | Lists saved accounts, including signed-out ones. Never returns tokens. |
-| `sign_in(None)` | Adds an account through the browser. |
-| `sign_in(Some(id))` | Signs in again to a saved account, without asking the user to choose one. |
+| `sign_in(None)` | Adds an account through the browser, or updates it if that registration is already saved. |
+| `sign_in(Some(id))` | Signs in again to a saved account. If it lacks plan usage, OpenAI asks the person to approve again. |
 | `access_token(id)` | Returns a valid bearer token, renewing it when it is about to expire. |
-| `models(id)` | Lists the models this account can use, in the service's order. |
-| `sign_out(id)` | Revokes the grant and clears the tokens. Keeps the account for a later sign-in. |
-| `remove_account(id)` | Revokes the grant and deletes everything stored for the account. |
+| `models(id)` | Lists the models the service shows for this account, in its order. |
+| `sign_out(id)` | Tries to revoke the application's access, then clears the tokens in any case. Keeps the account for a later sign-in. |
+| `remove_account(id)` | Tries to revoke the application's access, then deletes everything stored for the account. |
 
 `sign_in` returns a `SignIn`. Open `url()`, then await `wait()`, which returns the
 `Account` once it is verified and stored. Dropping a `SignIn` cancels it, and it
 expires after ten minutes.
 
+`sign_out` and `remove_account` return `SignOut::Revoked`, or `SignOut::LocalOnly`
+if OpenAI did not confirm the revocation. In that case, tell the person they can
+disconnect the application in their ChatGPT settings.
+
 An `Account` is one registration: a verified ChatGPT login together with the
 client ID OpenAI issued for it. Signing in again under the same registration
 updates it and keeps its ID. One login can have several, for example one per
-workspace, and they can share an email address. So save `Account::id` in your
-configuration to refer to an account, and use `email` only as a label. One
+ChatGPT workspace, and they can share an email address. So save `Account::id` in
+your configuration to refer to an account, and use `email` only as a label. One
 directory holds up to 64 accounts.
 
 The [API documentation](https://docs.rs/roomkit-auth) has the details.
@@ -148,22 +185,26 @@ or a response from the service. The enum may grow, so keep a catch-all arm.
 | Error | What it means | What to do |
 | --- | --- | --- |
 | `SignInRequired` | The account is signed out, its token can no longer be used, or it does not exist. | Check `accounts()`, then `sign_in(Some(id))` or `sign_in(None)`. |
-| `PlanUsageRequired` | The user signed in but did not grant ChatGPT plan usage. | `sign_in(Some(id))`, and ask them to approve it. |
+| `PlanUsageRequired` | The person signed in without granting plan usage. | `sign_in(Some(id))` if they choose to enable it. |
 | `Identity` | The signed-in identity could not be verified. | Sign in again. |
-| `Denied`, `Timeout`, `Cancelled` | The user declined, did not finish in time, or the attempt was replaced. | Offer a new attempt. |
-| `AccountLimit` | The directory already holds 64 accounts. | `remove_account`. Signing out does not free a place. |
-| `Storage` | The directory is not safe to use, or the platform is not supported. | Check its owner and permissions. |
-| `Busy` | Another process held the credential lock for 30 seconds. | Try again. |
-| `Network`, `Http(_)`, `Protocol` | The service could not be reached, refused, or answered unexpectedly. | Try again later. |
+| `Denied` | The person declined in the browser. | Offer a new attempt. |
+| `Timeout` | The sign-in was not finished within ten minutes. | Offer a new attempt. |
+| `Cancelled` | The account changed during the sign-in: it was removed or signed out, or its token was renewed. | Offer a new attempt. |
+| `AccountLimit` | The directory holds 64 accounts, so `sign_in(None)` is refused. | `sign_in(Some(id))` for a saved account, or `remove_account` to free a place. Signing out does not free one. |
+| `Storage` | The directory or a file in it is open to group or others, is a symlink, is corrupt or cannot be written, or the platform is not supported. | Check the modes (`0700` directory, `0600` files) and that `accounts.json` comes from this crate. |
+| `Busy` | Another task or process held the credential lock for 30 seconds. | Try again. |
+| `Network` | The service could not be reached, or the local listener could not start. | Try again later. |
+| `Http(status)` | The service refused the request. | Try again later after a 5xx. After a 4xx, do not repeat the same request. |
+| `Protocol` | The service answered in an unexpected way. | Try again later. |
 | `Configuration` | The application name is empty, over 100 bytes or contains control characters, or the system setup is invalid. | Fix the configuration. |
 
 ## Credentials and security
 
 Credentials are stored **unencrypted** in `accounts.json`, in the directory you
-choose. The directory must be private: the crate creates it with mode `0700`,
-writes files with mode `0600`, and refuses an existing directory or file that
-other users can reach, and symlinks. Writes are atomic, and processes sharing a
-directory take turns through a lock file.
+choose, next to the lock file `accounts.lock`. The crate creates the directory with
+mode `0700` and its files with mode `0600`. It refuses symlinks, and any directory
+or file whose mode gives group or others access; it checks the mode, not the owner.
+Writes are atomic, and processes sharing a directory take turns through the lock.
 
 - Keep the directory out of projects, source control, logs and shared backups.
 - Keep the `SignIn::url` address out of logs. It holds no token, but anyone who
