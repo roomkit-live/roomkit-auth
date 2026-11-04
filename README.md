@@ -65,11 +65,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // see when they approve it.
     let auth = ChatGpt::new("/path/to/app-state/auth", "Example App")?;
 
-    let saved = auth.accounts()?.into_iter().find(|a| a.connected && a.plan_usage);
-    let account = match saved {
-        Some(account) => account,
-        None => {
-            let sign_in = auth.sign_in(None).await?;
+    // Use the saved account if it is ready. Otherwise sign in, passing a saved
+    // account's ID so that it keeps its registration.
+    let account = match auth.accounts()?.into_iter().next() {
+        Some(account) if account.connected && account.plan_usage => account,
+        saved => {
+            let sign_in = auth.sign_in(saved.as_ref().map(|a| a.id.as_str())).await?;
             // A local URL. Open it in the user's browser, or show it to them.
             println!("Continue with ChatGPT: {}", sign_in.url());
             sign_in.wait().await?
@@ -96,11 +97,12 @@ Three things to know when you adapt it:
   use a dedicated directory inside your application's state directory, not a
   shared one such as `~/.config`.
 - **Credentials can stop working.** `access_token` then returns
-  `Error::SignInRequired`: run `sign_in` again.
+  `Error::SignInRequired` or `Error::Identity`: call `sign_in(Some(id))`.
 - **People can refuse plan usage.** Plan usage is the permission to make requests
   on their ChatGPT plan, and they can sign in without granting it. `wait()` still
   succeeds, with `account.plan_usage` set to `false`, and `models` and
-  `access_token` return `Error::PlanUsageRequired`.
+  `access_token` return `Error::PlanUsageRequired`. Use `sign_in(Some(id))` to ask
+  again: `sign_in(None)` would create another registration.
 
 To try the flow from a clone of this repository, run
 `cargo run --example sign_in -- /private/state/auth`. It signs in for real and
@@ -185,7 +187,7 @@ or a response from the service. The enum may grow, so keep a catch-all arm.
 | Error | What it means | What to do |
 | --- | --- | --- |
 | `SignInRequired` | The account is signed out, its token can no longer be used, or it does not exist. | Check `accounts()`, then `sign_in(Some(id))` or `sign_in(None)`. |
-| `PlanUsageRequired` | The person signed in without granting plan usage. | `sign_in(Some(id))` if they choose to enable it. |
+| `PlanUsageRequired` | The person did not grant plan usage, or a renewal no longer includes it. | `sign_in(Some(id))` if they choose to enable it. |
 | `Identity` | The signed-in identity could not be verified. | Sign in again. |
 | `Denied` | The person declined in the browser. | Offer a new attempt. |
 | `Timeout` | The sign-in was not finished within ten minutes. | Offer a new attempt. |
@@ -194,7 +196,7 @@ or a response from the service. The enum may grow, so keep a catch-all arm.
 | `Storage` | The directory or a file in it is open to group or others, is a symlink, is corrupt or cannot be written, or the platform is not supported. | Check the modes (`0700` directory, `0600` files) and that `accounts.json` comes from this crate. |
 | `Busy` | Another task or process held the credential lock for 30 seconds. | Try again. |
 | `Network` | The service could not be reached, or the local listener could not start. | Try again later. |
-| `Http(status)` | The service refused the request. | Try again later after a 5xx. After a 4xx, do not repeat the same request. |
+| `Http(status)` | The service refused the request. | Try again later after a 5xx or a 429. After another 4xx, do not repeat the same request. |
 | `Protocol` | The service answered in an unexpected way. | Try again later. |
 | `Configuration` | The application name is empty, over 100 bytes or contains control characters, or the system setup is invalid. | Fix the configuration. |
 

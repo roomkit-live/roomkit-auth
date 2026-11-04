@@ -7,3 +7,4 @@
 - Token refresh with rotation under a cross-process lock, revocation, and
   account-specific model discovery.
 - `sign_out` keeps an account for reauthorization; `remove_account` deletes it.
+- `sign_in(Some(id))` asks for consent again when an account lacks plan usage.

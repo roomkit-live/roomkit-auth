@@ -39,7 +39,7 @@ dependencies.
 Test observable behaviour through the public API. A fix comes with a test that
 fails without it. Tests use the local fake issuer and synthetic credentials: they
 never contact OpenAI and never need an account. Checking with a real account is
-opt-in, with `cargo run --example sign_in`.
+opt-in, with `cargo run --example sign_in -- <private-directory>`.
 
 ## Public interfaces
 

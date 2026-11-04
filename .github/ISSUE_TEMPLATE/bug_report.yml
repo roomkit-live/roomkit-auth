@@ -18,7 +18,7 @@ body:
     id: reproduce
     attributes:
       label: How to reproduce
-      description: The smallest steps, ideally with `cargo run --example sign_in` or a minimal program.
+      description: The smallest steps, ideally with `cargo run --example sign_in -- <private-directory>` or a minimal program.
     validations:
       required: true
   - type: input
