@@ -8,7 +8,9 @@ pub enum Error {
     #[error("Invalid authentication configuration")]
     Configuration,
     /// Private storage could not be read or written safely.
-    #[error("Cannot access private authentication storage; check its permissions")]
+    #[error(
+        "Cannot use the authentication directory: it must be accessible only by its owner (mode 0700), with intact files"
+    )]
     Storage,
     /// Another process kept the credential lock too long.
     #[error("Authentication storage is busy; try again")]

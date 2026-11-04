@@ -105,9 +105,10 @@ Three things to know when you adapt it:
   again: `sign_in(None)` would create another registration.
 
 To try the flow from a clone of this repository, run
-`cargo run --example sign_in -- /private/state/auth`. It signs in for real and
-lists your models. The automated tests never contact OpenAI: they use a local fake
-issuer and a clearly marked, public test signing key.
+`cargo run --example sign_in -- ~/.local/state/roomkit-auth-example`, with a path
+that does not exist yet. It signs in for real and lists your models. The automated
+tests never contact OpenAI: they use a local fake issuer and a clearly marked,
+public test signing key.
 
 ## How it works
 
@@ -181,8 +182,10 @@ The [API documentation](https://docs.rs/roomkit-auth) has the details.
 
 ## Handle errors
 
-Every `Error` message is safe to show to the user: none contains a token, a URL
-or a response from the service. The enum may grow, so keep a catch-all arm.
+Show errors with `{error}`: returning one from `main`, as the quick start does,
+prints only its name. Every message is safe to show to the user: none contains a
+token, a URL or a response from the service. The enum may grow, so keep a catch-all
+arm.
 
 | Error | What it means | What to do |
 | --- | --- | --- |
