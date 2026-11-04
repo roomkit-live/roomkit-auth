@@ -1,0 +1,18 @@
+name: Feature request
+description: Propose a capability for applications that use this crate.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What an application or its users cannot do today, and why it matters.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The behaviour you would like. Browser launching, menus and model requests belong to the host application; say which part belongs in this repository.
+    validations:
+      required: true

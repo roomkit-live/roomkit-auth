@@ -1,0 +1,36 @@
+name: Bug report
+description: Sign-in, token renewal, revocation or storage does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Report security issues privately instead: see SECURITY.md.
+        Never paste tokens, authorization codes, a sign-in URL, an email address or the contents of `accounts.json`.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what you saw instead, including the `Error` returned.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The smallest steps, ideally with `cargo run --example sign_in` or a minimal program.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Operating system and Rust version
+      placeholder: macOS 15, Rust 1.92
+    validations:
+      required: true
