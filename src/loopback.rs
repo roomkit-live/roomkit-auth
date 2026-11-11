@@ -1,25 +1,24 @@
-//! A bounded loopback-only redirect listener. The terminal sees only the local
-//! start URL, never authorization parameters or retained identity tokens.
-use std::collections::BTreeMap;
-
+//! A bounded loopback-only redirect listener. Its local start URL redirects
+//! in the browser, keeping retained identity hints out of the displayed URL.
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
 
-use crate::{Error, http::text};
-
-pub(crate) struct Callback {
-    pub code: String,
-    pub client_id: Option<String>,
-}
+use crate::{
+    Error,
+    callback::{self, Authorization},
+};
 
 pub(crate) async fn receive(
     listener: TcpListener,
     start: &url::Url,
     authorization: &url::Url,
     state: &str,
-) -> Result<Callback, Error> {
+) -> Result<Authorization, Error> {
+    let redirect = start
+        .join("/auth/callback")
+        .map_err(|_| Error::Configuration)?;
     let authority = start
         .as_str()
         .split('/')
@@ -73,11 +72,7 @@ pub(crate) async fn receive(
             respond(&mut stream, "404 Not Found", "Not found.", None).await;
             continue;
         }
-        let mut values = BTreeMap::new();
-        let duplicate = url
-            .query_pairs()
-            .any(|(k, v)| values.insert(k.into_owned(), v.into_owned()).is_some());
-        if duplicate || values.get("state").map(String::as_str) != Some(state) {
+        let Ok(callback) = callback::parse(url.as_str(), &redirect, state) else {
             respond(
                 &mut stream,
                 "400 Bad Request",
@@ -86,22 +81,6 @@ pub(crate) async fn receive(
             )
             .await;
             continue;
-        }
-        let result = if let Some(error) = values.get("error") {
-            Err(if error == "access_denied" {
-                Error::Denied
-            } else {
-                Error::Protocol
-            })
-        } else {
-            values
-                .remove("code")
-                .filter(|c| text(c, 8192))
-                .ok_or(Error::Protocol)
-                .map(|code| Callback {
-                    code,
-                    client_id: values.remove("client_id"),
-                })
         };
         respond(
             &mut stream,
@@ -110,7 +89,7 @@ pub(crate) async fn receive(
             None,
         )
         .await;
-        return result;
+        return callback.authorization();
     }
 }
 

@@ -4,6 +4,9 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// The pasted callback does not belong to the pending sign-in attempt.
+    #[error("Paste the complete callback URL from this sign-in attempt's browser address bar")]
+    InvalidCallback,
     /// Local configuration is invalid.
     #[error("Invalid authentication configuration")]
     Configuration,

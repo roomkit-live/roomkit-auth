@@ -1,7 +1,9 @@
 #![doc = include_str!("../README.md")]
+mod callback;
 mod error;
 mod http;
 mod loopback;
+mod remote;
 mod secret;
 mod signin;
 mod store;
@@ -9,6 +11,7 @@ mod store;
 use jsonwebtoken::jwk::JwkSet;
 
 pub use error::Error;
+pub use remote::RemoteSignIn;
 pub use secret::Secret;
 pub use signin::SignIn;
 use std::{

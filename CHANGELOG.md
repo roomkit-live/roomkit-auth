@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Sign in from another computer with `SignIn::remote()`: open the authorization
+  link there and submit its complete callback URL. The same PKCE and identity
+  checks apply, and copied links omit retained identity tokens and email hints.
+
 ## 0.1.0
 
 - Sign in with ChatGPT for local applications: browser consent on a loopback

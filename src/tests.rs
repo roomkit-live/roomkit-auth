@@ -19,6 +19,8 @@ use std::{
     },
 };
 
+mod remote;
+
 const SCOPE: &str = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
 #[derive(Default)]
 struct Wire {

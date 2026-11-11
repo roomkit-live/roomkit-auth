@@ -31,14 +31,13 @@ depend on RoomKit: it works in any Rust application that uses Tokio.
 ## When it fits
 
 It fits an open-source or locally hosted application, such as a command-line tool
-or a desktop application, where the browser runs on the same machine.
+or a desktop application. The browser may run on the same machine or on another
+computer when using the manual callback described below.
 
 It does not fit:
 
 - **a paid or remotely hosted application:** OpenAI asks you to complete its
   [interest form](https://openai.com/form/sign-in-with-chatgpt-interest/) first;
-- **a machine without a local browser:** the sign-in returns to a listener on
-  `127.0.0.1`, and there is no device-code flow;
 - **Windows:** `ChatGpt::new` returns `Error::Storage`. Linux and macOS are the
   supported platforms.
 
@@ -103,6 +102,23 @@ Three things to know when you adapt it:
   succeeds, with `account.plan_usage` set to `false`, and `models` and
   `access_token` return `Error::PlanUsageRequired`. Use `sign_in(Some(id))` to ask
   again: `sign_in(None)` would create another registration.
+
+### Sign in from another computer
+
+For an SSH session, obtain `let remote = sign_in.remote()` and show `remote.url()`
+instead of the loopback start URL. Open it in the laptop's browser. After consent,
+the browser redirects to `127.0.0.1` and may show a connection error. Copy the
+complete URL from its address bar into a private input in the host application,
+then call `remote.submit_callback(&callback_url)` and await `sign_in.wait()`.
+
+The callback contains a one-use authorization code, not an access or refresh
+token. It must match the attempt's callback address and state. The original PKCE,
+nonce, client ID and identity checks still apply. Invalid pasted URLs leave the
+attempt open; a valid callback can be submitted once. Dropping the sign-in or its
+wait future cancels the attempt, which otherwise expires after ten minutes.
+The copied authorization link omits saved identity tokens and email hints, so
+returning users select the account in the browser. Hosts must keep both URLs out
+of logs and callback submissions out of conversation history.
 
 To try the flow from a clone of this repository, run
 `cargo run --example sign_in -- ~/.local/state/roomkit-auth-example`, with a path
