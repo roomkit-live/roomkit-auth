@@ -268,13 +268,17 @@ async fn the_machine_s_account_is_asked_of_its_metadata_server() {
 async fn a_machine_that_is_none_has_no_credentials() {
     let refused = (StatusCode::NOT_FOUND, Vec::new(), String::new());
     let env = environment(&[], &[]);
-    // A ping answered, but not as Google's: the machine is none, at once.
-    let run_once = run(&env, vec![refused], None).await;
-    assert_eq!(
-        run_once.identity.access_token().await.unwrap_err(),
-        Error::NoCredentials
-    );
-    assert_eq!(run_once.fake.got.lock().unwrap().len(), 1);
+    // A ping answered, but not as Google's (a status, or no flavor): the
+    // machine is none, at once.
+    let unflavored = (StatusCode::OK, Vec::new(), String::new());
+    for answer in [refused, unflavored] {
+        let run_once = run(&env, vec![answer], None).await;
+        assert_eq!(
+            run_once.identity.access_token().await.unwrap_err(),
+            Error::NoCredentials
+        );
+        assert_eq!(run_once.fake.got.lock().unwrap().len(), 1);
+    }
     // NO_GCE_CHECK says the machine is none: nothing is asked.
     let env = environment(&[("NO_GCE_CHECK", "true")], &[]);
     let unchecked = run(&env, Vec::new(), None).await;
