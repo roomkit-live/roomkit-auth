@@ -27,7 +27,7 @@ pub(super) async fn begin(
     if existing.is_none() && data.accounts.len() >= MAX_ACCOUNTS {
         return Err(Error::AccountLimit);
     }
-    let browser = Browser::new().await?;
+    let browser = Browser::new("/").await?;
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(browser.verifier.expose_secret()));
     let mut url = url::Url::parse(&auth.0.endpoints.authorization_endpoint)
         .map_err(|_| Error::Configuration)?;

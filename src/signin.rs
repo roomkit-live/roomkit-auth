@@ -55,7 +55,7 @@ impl<A> fmt::Debug for SignIn<A> {
 pub(crate) async fn begin(auth: ChatGpt, account: Option<&str>) -> Result<SignIn, Error> {
     let (host, existing) = registration(&auth, account).await?;
     let discovery = auth.inner.http.discovery().await?;
-    let browser = Browser::new().await?;
+    let browser = Browser::new("/auth/callback").await?;
     let exchange = Exchange {
         auth,
         existing,
@@ -79,7 +79,7 @@ pub(crate) struct Browser {
 }
 
 impl Browser {
-    pub async fn new() -> Result<Self, Error> {
+    pub async fn new(callback_path: &str) -> Result<Self, Error> {
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
             .await
             .map_err(|_| Error::Network)?;
@@ -87,7 +87,7 @@ impl Browser {
         let local = url::Url::parse(&format!("http://{address}/start/{}", random()?))
             .map_err(|_| Error::Configuration)?;
         let redirect = local
-            .join("/auth/callback")
+            .join(callback_path)
             .map_err(|_| Error::Configuration)?;
         Ok(Self {
             listener,
@@ -105,13 +105,23 @@ impl Browser {
         F: FnOnce(crate::callback::Authorization) -> Fut + Send + 'static,
         Fut: Future<Output = Result<A, Error>> + Send + 'static,
     {
-        let (remote, receiver) =
-            RemoteSignIn::new(authorization.clone(), self.redirect, self.state.clone());
+        let (remote, receiver) = RemoteSignIn::new(
+            authorization.clone(),
+            self.redirect.clone(),
+            self.state.clone(),
+        );
         let local = self.local.clone();
         let task = tokio::spawn(async move {
             tokio::time::timeout(Duration::from_secs(600), async move {
-                let callback =
-                    receive(self.listener, &local, &authorization, &self.state, receiver).await?;
+                let callback = receive(
+                    self.listener,
+                    &local,
+                    &self.redirect,
+                    &authorization,
+                    &self.state,
+                    receiver,
+                )
+                .await?;
                 finish(callback).await
             })
             .await
@@ -194,12 +204,13 @@ async fn registration(
 async fn receive(
     listener: TcpListener,
     local: &url::Url,
+    redirect: &url::Url,
     authorization: &url::Url,
     state: &Secret,
     receiver: tokio::sync::oneshot::Receiver<crate::callback::Callback>,
 ) -> Result<crate::callback::Authorization, Error> {
     tokio::select! {
-        result = loopback::receive(listener, local, authorization, state.expose_secret()) => result,
+        result = loopback::receive(listener, local, redirect, authorization, state.expose_secret()) => result,
         result = receiver => result.map_err(|_| Error::Cancelled)?.authorization(),
     }
 }

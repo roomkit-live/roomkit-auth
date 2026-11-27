@@ -13,12 +13,10 @@ use crate::{
 pub(crate) async fn receive(
     listener: TcpListener,
     start: &url::Url,
+    redirect: &url::Url,
     authorization: &url::Url,
     state: &str,
 ) -> Result<Authorization, Error> {
-    let redirect = start
-        .join("/auth/callback")
-        .map_err(|_| Error::Configuration)?;
     let authority = start
         .as_str()
         .split('/')
@@ -68,11 +66,11 @@ pub(crate) async fn receive(
             .await;
             continue;
         }
-        if url.path() != "/auth/callback" {
+        if url.path() != redirect.path() {
             respond(&mut stream, "404 Not Found", "Not found.", None).await;
             continue;
         }
-        let Ok(callback) = callback::parse(url.as_str(), &redirect, state) else {
+        let Ok(callback) = callback::parse(url.as_str(), redirect, state) else {
             respond(
                 &mut stream,
                 "400 Bad Request",

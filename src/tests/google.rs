@@ -11,6 +11,7 @@ async fn consent(f: &Fixture, google: &Google, id: Option<&str>) -> Result<Googl
     assert!(query["scope"].split_whitespace().any(|s| s == CLOUD));
     assert!(!query.contains_key("client_secret"));
     let mut callback = url::Url::parse(&query["redirect_uri"]).unwrap();
+    assert_eq!(callback.path(), "/");
     callback
         .query_pairs_mut()
         .append_pair("state", &query["state"])
