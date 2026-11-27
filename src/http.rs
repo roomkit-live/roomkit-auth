@@ -41,9 +41,9 @@ pub(crate) struct Http {
     pub resource: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub(crate) struct Discovery {
-    issuer: String,
+    pub(crate) issuer: String,
     pub authorization_endpoint: String,
     pub token_endpoint: String,
     pub jwks_uri: String,
@@ -186,7 +186,11 @@ impl Http {
         let key = DecodingKey::from_jwk(jwk).map_err(|_| Error::Identity)?;
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_audience(&[client_id]);
-        validation.set_issuer(&[self.issuer.as_str()]);
+        if self.issuer == crate::google::ISSUER {
+            validation.set_issuer(&[crate::google::ISSUER, "accounts.google.com"]);
+        } else {
+            validation.set_issuer(&[self.issuer.as_str()]);
+        }
         validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
         validation.validate_nbf = true;
         validation.leeway = 30;
@@ -212,17 +216,29 @@ impl Http {
         client_id: &str,
         refresh: &Secret,
     ) -> Result<(), Error> {
+        self.revoke_fields(
+            discovery,
+            &[
+                ("client_id", client_id),
+                ("token", refresh.expose_secret()),
+                ("token_type_hint", "refresh_token"),
+            ],
+        )
+        .await
+    }
+
+    pub async fn revoke_fields(
+        &self,
+        discovery: &Discovery,
+        fields: &[(&str, &str)],
+    ) -> Result<(), Error> {
         // Retain the credential for bounded retries; the caller clears it after
         // this operation and reports whether remote revocation was confirmed.
         for attempt in 0..3 {
             let result = self
                 .client
                 .post(&discovery.revocation_endpoint)
-                .form(&[
-                    ("client_id", client_id),
-                    ("token", refresh.expose_secret()),
-                    ("token_type_hint", "refresh_token"),
-                ])
+                .form(fields)
                 .send()
                 .await;
             match result {

@@ -4,19 +4,19 @@ use crate::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use sha2::{Digest, Sha256};
-use std::{fmt, time::Duration};
+use std::{fmt, future::Future, time::Duration};
 use tokio::{net::TcpListener, task::JoinHandle};
 
 mod exchange;
 use exchange::Exchange;
 
 /// Pending sign-in. Debug hides URLs. Drop cancels; expires after ten minutes.
-pub struct SignIn {
+pub struct SignIn<A = Account> {
     url: url::Url,
     remote: RemoteSignIn,
-    task: Option<JoinHandle<Result<Account, Error>>>,
+    task: Option<JoinHandle<Result<A, Error>>>,
 }
-impl SignIn {
+impl<A> SignIn<A> {
     /// Loopback URL to open; contains no token, identity hint or code. Keep it
     /// out of logs: until the attempt ends, it can be replayed and redirects to
     /// the authorization request, which carries the attempt's state and hint.
@@ -30,7 +30,7 @@ impl SignIn {
         self.remote.clone()
     }
     /// Wait for consent, verified identity and durable storage.
-    pub async fn wait(mut self) -> Result<Account, Error> {
+    pub async fn wait(mut self) -> Result<A, Error> {
         // Keeping the handle here ensures dropping wait also aborts the task.
         let task = self.task.as_mut().ok_or(Error::Cancelled)?;
         let result = task.await.map_err(|_| Error::Cancelled)?;
@@ -38,7 +38,7 @@ impl SignIn {
         result
     }
 }
-impl Drop for SignIn {
+impl<A> Drop for SignIn<A> {
     fn drop(&mut self) {
         self.remote.cancel();
         if let Some(task) = &self.task {
@@ -46,7 +46,7 @@ impl Drop for SignIn {
         }
     }
 }
-impl fmt::Debug for SignIn {
+impl<A> fmt::Debug for SignIn<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SignIn").finish_non_exhaustive()
     }
@@ -55,41 +55,74 @@ impl fmt::Debug for SignIn {
 pub(crate) async fn begin(auth: ChatGpt, account: Option<&str>) -> Result<SignIn, Error> {
     let (host, existing) = registration(&auth, account).await?;
     let discovery = auth.inner.http.discovery().await?;
-    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-        .await
-        .map_err(|_| Error::Network)?;
-    let address = listener.local_addr().map_err(|_| Error::Network)?;
-    let redirect = format!("http://{address}/auth/callback");
-    let start = url::Url::parse(&format!("http://{address}/start/{}", random()?))
-        .map_err(|_| Error::Configuration)?;
-    let state = Secret(random()?);
-    let nonce = Secret(random()?);
-    let verifier = Secret(random()?);
+    let browser = Browser::new().await?;
     let exchange = Exchange {
         auth,
         existing,
         discovery,
-        redirect,
-        nonce,
-        verifier,
+        redirect: browser.redirect.to_string(),
+        nonce: browser.nonce.clone(),
+        verifier: browser.verifier.clone(),
     };
-    let authorization = authorization(&exchange, &host, &state)?;
-    let local = start.clone();
-    let redirect_url = url::Url::parse(&exchange.redirect).map_err(|_| Error::Configuration)?;
-    let (remote, receiver) = RemoteSignIn::new(authorization.clone(), redirect_url, state.clone());
-    let task = tokio::spawn(async move {
-        tokio::time::timeout(Duration::from_secs(600), async {
-            let callback = receive(listener, &local, &authorization, &state, receiver).await?;
-            exchange.complete(callback).await
+    let authorization = authorization(&exchange, &host, &browser.state)?;
+    Ok(browser.start(authorization, move |callback| exchange.complete(callback)))
+}
+
+/// The listener and one-use challenges for a local application's browser sign-in.
+pub(crate) struct Browser {
+    listener: TcpListener,
+    local: url::Url,
+    pub redirect: url::Url,
+    pub state: Secret,
+    pub nonce: Secret,
+    pub verifier: Secret,
+}
+
+impl Browser {
+    pub async fn new() -> Result<Self, Error> {
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .map_err(|_| Error::Network)?;
+        let address = listener.local_addr().map_err(|_| Error::Network)?;
+        let local = url::Url::parse(&format!("http://{address}/start/{}", random()?))
+            .map_err(|_| Error::Configuration)?;
+        let redirect = local
+            .join("/auth/callback")
+            .map_err(|_| Error::Configuration)?;
+        Ok(Self {
+            listener,
+            local,
+            redirect,
+            state: Secret(random()?),
+            nonce: Secret(random()?),
+            verifier: Secret(random()?),
         })
-        .await
-        .map_err(|_| Error::Timeout)?
-    });
-    Ok(SignIn {
-        url: start,
-        remote,
-        task: Some(task),
-    })
+    }
+
+    pub fn start<A, F, Fut>(self, authorization: url::Url, finish: F) -> SignIn<A>
+    where
+        A: Send + 'static,
+        F: FnOnce(crate::callback::Authorization) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<A, Error>> + Send + 'static,
+    {
+        let (remote, receiver) =
+            RemoteSignIn::new(authorization.clone(), self.redirect, self.state.clone());
+        let local = self.local.clone();
+        let task = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_secs(600), async move {
+                let callback =
+                    receive(self.listener, &local, &authorization, &self.state, receiver).await?;
+                finish(callback).await
+            })
+            .await
+            .map_err(|_| Error::Timeout)?
+        });
+        SignIn {
+            url: self.local,
+            remote,
+            task: Some(task),
+        }
+    }
 }
 
 fn authorization(exchange: &Exchange, host: &str, state: &Secret) -> Result<url::Url, Error> {
@@ -174,9 +207,13 @@ async fn receive(
 /// Store a verified sign-in. A reauthorization updates the entry it started
 /// from, unless that entry changed meanwhile; a new sign-in takes the entry of
 /// its registration if it has one, and never touches another registration's.
-async fn save(auth: &ChatGpt, existing: Option<&Record>, record: Record) -> Result<Account, Error> {
-    let _lease = auth.inner.store.lock().await?;
-    let mut data = auth.inner.store.read()?;
+pub(crate) async fn save(
+    store: &crate::store::Store,
+    existing: Option<&Record>,
+    record: Record,
+) -> Result<Record, Error> {
+    let _lease = store.lock().await?;
+    let mut data = store.read()?;
     let record = match existing {
         Some(old) => {
             let current = data.accounts.get(&old.id);
@@ -187,10 +224,9 @@ async fn save(auth: &ChatGpt, existing: Option<&Record>, record: Record) -> Resu
         }
         None => data.place(record)?,
     };
-    let account = record.account();
-    data.accounts.insert(record.id.clone(), record);
-    auth.inner.store.write(&data)?;
-    Ok(account)
+    data.accounts.insert(record.id.clone(), record.clone());
+    store.write(&data)?;
+    Ok(record)
 }
 
 fn random() -> Result<String, Error> {

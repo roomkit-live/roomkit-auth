@@ -1,6 +1,6 @@
 # RoomKit Auth
 
-**Let your local Rust application use a person's ChatGPT plan, without an API key.**
+**Browser sign-in for local Rust applications using ChatGPT or Google.**
 
 [![CI](https://github.com/roomkit-live/roomkit-auth/actions/workflows/ci.yml/badge.svg)](https://github.com/roomkit-live/roomkit-auth/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/roomkit-auth)](https://crates.io/crates/roomkit-auth)
@@ -20,13 +20,28 @@ application, verifying who signed in, storing credentials safely, renewing
 tokens and revoking them. Your application keeps the rest: opening the browser,
 its interface and the model requests.
 
-ChatGPT is the only provider today. The crate was written for
+The crate was written for
 [RoomKit](https://github.com/roomkit-live/roomkit) applications but does not
 depend on RoomKit: it works in any Rust application that uses Tokio.
 
 > **Early development.** The API may change before 1.0. OpenAI's flow also has
 > [preview limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
 > and [conditions](#openais-conditions) your application must follow.
+
+## Google accounts and Gemini
+
+Register your application once in Google Cloud as a **Desktop app** OAuth client.
+Pass its client ID and installed-app client secret to `Google::new`. A native
+client cannot keep this published credential confidential. Each user authorizes
+access in the browser with PKCE. `Google::sign_in`, `SignIn::remote`,
+`Google::accounts`, `Google::access_token` and `Google::sign_out` handle the
+account lifecycle and use separate private storage from ChatGPT.
+
+For the Gemini Developer API, send the access token as a bearer token to
+`generativelanguage.googleapis.com` and supply the user's quota project in
+`x-goog-user-project`. Enable the Generative Language API on that project
+and grant the user permission to consume its services. See Google's
+[Gemini OAuth guide](https://ai.google.dev/gemini-api/docs/oauth).
 
 ## When it fits
 

@@ -23,7 +23,9 @@ impl Exchange {
         let keys = self.auth.inner.http.keys(&self.discovery).await?;
         let grant = self.grant(&client_id, &callback.code).await?;
         let record = self.verified_record(client_id, grant, &keys)?;
-        super::save(&self.auth, self.existing.as_ref(), record).await
+        super::save(&self.auth.inner.store, self.existing.as_ref(), record)
+            .await
+            .map(|r| r.account())
     }
 
     async fn grant(&self, client_id: &str, code: &str) -> Result<http::Grant, Error> {

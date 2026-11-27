@@ -19,6 +19,7 @@ use std::{
     },
 };
 
+mod google;
 mod remote;
 
 const SCOPE: &str = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
@@ -247,7 +248,12 @@ async fn token(
         URL_SAFE_NO_PAD.encode(Sha256::digest(&form["code_verifier"]))
     );
     assert_eq!(form["redirect_uri"], query["redirect_uri"]);
-    assert_eq!(form["resource"], format!("{}/v1", peer.issuer));
+    if form["client_id"] == "fixture-google-client" {
+        assert_eq!(form["client_secret"], "fixture-installed-client");
+        assert!(!form.contains_key("resource"));
+    } else {
+        assert_eq!(form["resource"], format!("{}/v1", peer.issuer));
+    }
     assert_ne!(form["client_id"], "dynamic_agent_client");
     let mut claims = json!({"iss":peer.issuer, "sub":"account-one", "aud":form["client_id"], "exp": now().unwrap()+3600, "nonce":query["nonce"], "email":"person@example.test"});
     for (k, v) in &wire.claims {

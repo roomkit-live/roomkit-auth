@@ -46,6 +46,9 @@ pub enum Error {
     /// account; [`ChatGpt::remove_account`](crate::ChatGpt::remove_account) frees its place.
     #[error("Too many saved accounts; remove one and try again")]
     AccountLimit,
+    /// Google did not grant the scope required for Gemini API calls.
+    #[error("Authorize Google Cloud API access to use Gemini")]
+    GoogleScopeRequired,
     /// Identity was granted but plan usage was not.
     #[error("ChatGPT plan usage is not enabled for this account; sign in to authorize it")]
     PlanUsageRequired,

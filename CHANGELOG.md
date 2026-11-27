@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Connect Google accounts using an installed application OAuth client, renew Gemini API access and revoke grants.
+
 - Sign in from another computer with `SignIn::remote()`: open the authorization
   link there and submit its complete callback URL. The same PKCE and identity
   checks apply, and copied links omit retained identity tokens and email hints.

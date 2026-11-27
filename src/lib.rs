@@ -1,7 +1,9 @@
 #![doc = include_str!("../README.md")]
 mod callback;
 mod error;
+mod google;
 mod http;
+pub use google::{Google, GoogleAccount};
 mod loopback;
 mod remote;
 mod secret;
