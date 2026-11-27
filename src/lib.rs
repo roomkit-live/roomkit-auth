@@ -1,31 +1,50 @@
 #![doc = include_str!("../README.md")]
+#[cfg(feature = "accounts")]
 mod callback;
 mod error;
+#[cfg(feature = "accounts")]
 mod google;
+#[cfg(feature = "google-cloud")]
+mod google_cloud;
+#[cfg(feature = "accounts")]
 mod http;
+#[cfg(feature = "accounts")]
 pub use google::{Google, GoogleAccount};
+#[cfg(feature = "accounts")]
 mod loopback;
+#[cfg(feature = "accounts")]
 mod remote;
 mod secret;
+#[cfg(feature = "accounts")]
 mod signin;
+#[cfg(feature = "accounts")]
 mod store;
+#[cfg(any(feature = "accounts", feature = "google-cloud"))]
+mod tls;
 
+#[cfg(feature = "accounts")]
 use jsonwebtoken::jwk::JwkSet;
 
 pub use error::Error;
+#[cfg(feature = "google-cloud")]
+pub use google_cloud::GoogleCloud;
+#[cfg(feature = "accounts")]
 pub use remote::RemoteSignIn;
 pub use secret::Secret;
+#[cfg(feature = "accounts")]
 pub use signin::SignIn;
-use std::{
-    path::Path,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+#[cfg(feature = "accounts")]
+use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(feature = "accounts")]
+use std::{path::Path, sync::Arc};
+#[cfg(feature = "accounts")]
 use store::{Record, Store, Tokens};
 
 /// Trusted inference root. Never forward these tokens to a configurable URL.
+#[cfg(feature = "accounts")]
 pub const CHATGPT_API_ROOT: &str = http::RESOURCE;
 
+#[cfg(feature = "accounts")]
 /// Metadata safe to display, based on a verified ID token.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Account {
@@ -38,6 +57,7 @@ pub struct Account {
     /// Whether the grant authorizes ChatGPT plan usage.
     pub plan_usage: bool,
 }
+#[cfg(feature = "accounts")]
 /// An available model. Catalogue order is preserved.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Model {
@@ -46,6 +66,7 @@ pub struct Model {
     /// Display name.
     pub name: String,
 }
+#[cfg(feature = "accounts")]
 /// Local credentials are removed in either case.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignOut {
@@ -54,11 +75,13 @@ pub enum SignOut {
     /// Local sign-out succeeded; remote revocation could not be confirmed.
     LocalOnly,
 }
+#[cfg(feature = "accounts")]
 /// Account manager. Processes sharing a directory serialize token rotation.
 #[derive(Clone, Debug)]
 pub struct ChatGpt {
     inner: Arc<Inner>,
 }
+#[cfg(feature = "accounts")]
 #[derive(Debug)]
 struct Inner {
     store: Store,
@@ -66,6 +89,7 @@ struct Inner {
     app_name: String,
 }
 
+#[cfg(feature = "accounts")]
 impl ChatGpt {
     /// Open private storage without network access or implicit sign-in.
     pub fn new(directory: impl AsRef<Path>, app_name: impl Into<String>) -> Result<Self, Error> {
@@ -249,14 +273,16 @@ impl ChatGpt {
         })
     }
 }
+#[cfg(feature = "accounts")]
 fn scopes(text: &str) -> Vec<String> {
     text.split_whitespace().map(str::to_owned).collect()
 }
+#[cfg(feature = "accounts")]
 fn now() -> Result<u64, Error> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .map_err(|_| Error::Configuration)
 }
-#[cfg(test)]
+#[cfg(all(test, feature = "accounts"))]
 mod tests;

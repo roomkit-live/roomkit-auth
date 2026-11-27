@@ -107,7 +107,7 @@ impl Fixture {
             auth,
             peer,
             browser: reqwest::Client::builder()
-                .tls_backend_preconfigured(crate::http::tls_config().unwrap())
+                .tls_backend_preconfigured(crate::tls::tls_config().unwrap())
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .unwrap(),

@@ -43,6 +43,26 @@ For the Gemini Developer API, send the access token as a bearer token to
 and grant the user permission to consume its services. See Google's
 [Gemini OAuth guide](https://ai.google.dev/gemini-api/docs/oauth).
 
+## Google Cloud identities for servers
+
+The `google-cloud` feature gives the identity a server process calls Google
+Cloud APIs as, such as Gemini on Vertex AI, with no browser and no storage:
+`GoogleCloud::service_account(contents, client)` reads a service-account key
+file's contents, and `access_token()` returns a token for the
+`cloud-platform` scope. The key signs an assertion that Google's token
+endpoint exchanges for the token, which is kept until shortly before it
+expires. This follows Google's
+[OAuth 2.0 for server to server applications](https://developers.google.com/identity/protocols/oauth2/service-account)
+as google-auth implements it. The feature needs neither `jsonwebtoken` nor a C
+compiler: it signs with ring.
+
+```toml
+roomkit-auth = { version = "0.1", default-features = false, features = ["google-cloud"] }
+```
+
+The browser sign-in of ChatGPT and Google accounts is the default `accounts`
+feature.
+
 ## When it fits
 
 It fits an open-source or locally hosted application, such as a command-line tool

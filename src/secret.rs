@@ -36,11 +36,15 @@ impl fmt::Debug for Secret {
 
 /// Serde for the two places a credential may cross as plain text: the token
 /// response and the private store. Use with `#[serde(with = "...")]`.
+#[cfg(any(feature = "accounts", feature = "google-cloud"))]
 pub(crate) mod plain {
-    use serde::{Deserialize, Deserializer, Serializer};
+    #[cfg(feature = "accounts")]
+    use serde::Serializer;
+    use serde::{Deserialize, Deserializer};
 
     use super::Secret;
 
+    #[cfg(feature = "accounts")]
     pub fn serialize<S: Serializer>(secret: &Secret, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&secret.0)
     }
@@ -49,6 +53,7 @@ pub(crate) mod plain {
         String::deserialize(deserializer).map(Secret)
     }
 
+    #[cfg(feature = "accounts")]
     pub fn optional<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<Secret>, D::Error> {

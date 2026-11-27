@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `GoogleCloud`, behind the `google-cloud` feature: the identity of a service-account
+  key for a server process, and a renewed token for the `cloud-platform` scope. The
+  account sign-in is the default `accounts` feature.
+
 - Connect Google accounts using an installed application OAuth client, renew Gemini API access and revoke grants.
 
 - Sign in from another computer with `SignIn::remote()`: open the authorization

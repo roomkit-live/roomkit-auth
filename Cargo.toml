@@ -10,25 +10,50 @@ keywords = ["oauth", "chatgpt", "openai", "authentication", "pkce"]
 categories = ["authentication"]
 include = ["src/**", "tests/**", "examples/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
 
+[features]
+default = ["accounts"]
+# Browser sign-in to ChatGPT and Google accounts, their private storage and
+# the verification of their ID tokens.
+accounts = [
+    "dep:fs2",
+    "dep:getrandom",
+    "dep:jsonwebtoken",
+    "dep:sha2",
+    "dep:tempfile",
+    "dep:uuid",
+    "reqwest/json",
+    "reqwest/form",
+]
+# The identity a server process calls Google Cloud as: a service-account
+# key, Application Default Credentials, the metadata server, a borrowed
+# service account. Signed with ring, which rustls already brings.
+google-cloud = ["dep:ring", "dep:rustls-pki-types", "reqwest/form"]
+
 [dependencies]
 base64 = "0.23"
-fs2 = "0.4"
-getrandom = "0.4"
-jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs"] }
+fs2 = { version = "0.4", optional = true }
+getrandom = { version = "0.4", optional = true }
+jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs"], optional = true }
 # rustls with the ring provider and the webpki roots, given to reqwest as a
 # configuration: 0.13 has no ring-backed feature.
-reqwest = { version = "0.13", default-features = false, features = ["json", "form", "rustls-no-provider"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+ring = { version = "0.17", optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = { version = "1.12", features = ["std"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.11"
-tempfile = "3"
+sha2 = { version = "0.11", optional = true }
+tempfile = { version = "3", optional = true }
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "macros", "net", "io-util", "sync", "time"] }
 url = "2.5.9"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4"], optional = true }
 webpki-roots = "1"
 zeroize = "1"
+
+[[example]]
+name = "sign_in"
+required-features = ["accounts"]
 
 [dev-dependencies]
 axum = "0.8"
