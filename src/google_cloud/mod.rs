@@ -25,7 +25,7 @@ use reqwest::header::HeaderValue;
 use crate::{Error, Secret, tls::tls_config};
 use key::Key;
 #[doc(hidden)]
-pub use token::Pace;
+pub use token::{Clock, Pace, Wait};
 use token::{Granted, Sender};
 
 /// How long before it expires a token is asked again, in seconds:

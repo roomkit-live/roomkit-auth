@@ -248,3 +248,14 @@ fn an_identity_shows_no_key() {
     assert!(!shown.contains("PRIVATE KEY"), "{shown}");
     assert!(shown.contains("runner@proj-1"), "{shown}");
 }
+
+#[test]
+fn a_replay_s_pace_is_named_from_outside_the_crate() {
+    // What a provider's replay seam builds: the crate root names it.
+    let pace = crate::Pace {
+        now: Arc::new(|| CLOCK),
+        wait: Arc::new(|_| Box::pin(std::future::ready(()))),
+    };
+    let identity = GoogleCloud::service_account(&key_file(None), "fixture-client/1").unwrap();
+    assert!(identity.replaying("http://127.0.0.1:9", pace).is_ok());
+}

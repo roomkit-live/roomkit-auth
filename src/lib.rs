@@ -28,6 +28,9 @@ use jsonwebtoken::jwk::JwkSet;
 pub use error::Error;
 #[cfg(feature = "google-cloud")]
 pub use google_cloud::GoogleCloud;
+#[cfg(feature = "google-cloud")]
+#[doc(hidden)]
+pub use google_cloud::{Clock, Pace, Wait};
 #[cfg(feature = "accounts")]
 pub use remote::RemoteSignIn;
 pub use secret::Secret;
