@@ -53,7 +53,6 @@ pub(crate) mod plain {
         String::deserialize(deserializer).map(Secret)
     }
 
-    #[cfg(feature = "accounts")]
     pub fn optional<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<Secret>, D::Error> {

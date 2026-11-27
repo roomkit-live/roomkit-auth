@@ -30,7 +30,7 @@ pub use error::Error;
 pub use google_cloud::GoogleCloud;
 #[cfg(feature = "google-cloud")]
 #[doc(hidden)]
-pub use google_cloud::{Clock, Pace, Wait};
+pub use google_cloud::{Clock, Environment, File, Pace, Variable, Wait};
 #[cfg(feature = "accounts")]
 pub use remote::RemoteSignIn;
 pub use secret::Secret;

@@ -34,6 +34,8 @@ pub(super) struct Key {
     key_id: Option<String>,
     pub(super) token_uri: String,
     signer: RsaKeyPair,
+    /// The project a request is billed to, when the key file names one.
+    pub(super) quota_project: Option<String>,
 }
 
 /// The members of a key file the identity reads.
@@ -43,6 +45,7 @@ struct Written {
     token_uri: Option<String>,
     private_key: Option<String>,
     private_key_id: Option<String>,
+    quota_project_id: Option<String>,
 }
 
 impl Key {
@@ -72,6 +75,7 @@ impl Key {
             key_id: written.private_key_id,
             token_uri,
             signer: signer.map_err(|_| Error::Configuration)?,
+            quota_project: written.quota_project_id,
         })
     }
 

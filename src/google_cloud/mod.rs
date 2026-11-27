@@ -8,14 +8,24 @@
 //! keeps it, and asked again then; one refresh runs at a time, whatever the
 //! number of calls waiting on it.
 //!
+//! The identity is a service-account key, Application Default Credentials
+//! found as google-auth finds them (a key, a user's credentials, a
+//! borrowed account, or the machine's metadata server), or a service
+//! account borrowed with either of them.
+//!
 //! The token requests are google-auth's: a form posted on a client of
 //! their own, which reads the proxies of the environment, trusts the webpki
 //! roots and waits up to 120 seconds to connect and for each read. They are
 //! named by the client the caller says it is.
 
+mod adc;
+mod borrowed;
+mod environment;
 mod json;
 mod key;
+mod metadata;
 mod token;
+mod user;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,10 +33,15 @@ use std::time::Duration;
 use reqwest::header::HeaderValue;
 
 use crate::{Error, Secret, tls::tls_config};
+use borrowed::Borrowing;
+#[doc(hidden)]
+pub use environment::{Environment, File, Variable};
 use key::Key;
+use metadata::Machine;
 #[doc(hidden)]
 pub use token::{Clock, Pace, Wait};
 use token::{Granted, Sender};
+use user::User;
 
 /// How long before it expires a token is asked again, in seconds:
 /// google-auth's `REFRESH_THRESHOLD`.
@@ -59,7 +74,59 @@ struct Inner {
 #[derive(Debug)]
 enum Identity {
     /// A service-account key.
-    Key(Key),
+    Key(Box<Key>),
+    /// A user's credentials.
+    User(User),
+    /// A service account borrowed with `source`'s token.
+    Borrowed {
+        source: Box<Identity>,
+        borrowing: Borrowing,
+        /// The project a request is billed to, when the file names one.
+        quota_project: Option<String>,
+    },
+    /// The machine's account, from its metadata server.
+    Machine(Machine),
+    /// Application Default Credentials that could not be read: the first
+    /// token fails with this.
+    Unresolved(Error),
+}
+
+impl Identity {
+    /// A token of the identity, at `now`.
+    fn granted<'a>(
+        &'a self,
+        sender: &'a Sender,
+        now: f64,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Granted, Error>> + Send + 'a>> {
+        Box::pin(async move {
+            match self {
+                Self::Key(key) => {
+                    let assertion = key.assertion(now)?;
+                    let form = [("assertion", assertion.as_str()), ("grant_type", JWT_GRANT)];
+                    sender.granted(&key.token_uri, &form, now).await
+                }
+                Self::User(user) => user.granted(sender, now).await,
+                Self::Borrowed {
+                    source, borrowing, ..
+                } => {
+                    let lent = source.granted(sender, now).await?;
+                    borrowing.granted(sender, &lent.token).await
+                }
+                Self::Machine(machine) => machine.granted(sender, now).await,
+                Self::Unresolved(error) => Err(*error),
+            }
+        })
+    }
+
+    /// The project a request is billed to, when the credentials name one.
+    fn quota_project(&self) -> Option<&str> {
+        match self {
+            Self::Key(key) => key.quota_project.as_deref(),
+            Self::User(user) => user.quota_project.as_deref(),
+            Self::Borrowed { quota_project, .. } => quota_project.as_deref(),
+            Self::Machine(_) | Self::Unresolved(_) => None,
+        }
+    }
 }
 
 impl GoogleCloud {
@@ -73,7 +140,62 @@ impl GoogleCloud {
     /// key, or a `client` that is no value of a header.
     pub fn service_account(contents: &str, client: &str) -> Result<Self, Error> {
         let key = Key::read(contents)?;
-        Self::of(Identity::Key(key), client)
+        Self::of(Identity::Key(Box::new(key)), client)
+    }
+
+    /// The identity of Application Default Credentials, found as google-auth
+    /// finds them in the process's environment; its token requests name
+    /// `client`. A file is read now; the metadata server, if it comes to
+    /// that, is asked at the first token, and a file that cannot be read
+    /// fails that token.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Configuration`] for a `client` that is no value of a header.
+    pub fn application_default(client: &str) -> Result<Self, Error> {
+        Self::application_default_in(&Environment::of_the_process(), client)
+    }
+
+    /// As [`application_default`](Self::application_default), in
+    /// `environment`: a replay's or a test's.
+    ///
+    /// # Errors
+    ///
+    /// As `application_default`.
+    #[doc(hidden)]
+    pub fn application_default_in(environment: &Environment, client: &str) -> Result<Self, Error> {
+        Self::of(adc::found(environment), client)
+    }
+
+    /// The service account `target` (its email), borrowed with this
+    /// identity's token, as IAM Credentials lends it.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Configuration`] for an identity a clone already shares.
+    pub fn borrowing(self, target: &str) -> Result<Self, Error> {
+        let inner = Arc::try_unwrap(self.inner).map_err(|_| Error::Configuration)?;
+        let identity = Identity::Borrowed {
+            source: Box::new(inner.identity),
+            borrowing: Borrowing::of(target),
+            quota_project: None,
+        };
+        Ok(Self {
+            inner: Arc::new(Inner {
+                identity,
+                agent: inner.agent,
+                sender: inner.sender,
+                held: tokio::sync::Mutex::new(None),
+            }),
+        })
+    }
+
+    /// The project the requests made with the identity are billed to, when
+    /// its credentials name one (`quota_project_id`): what a request
+    /// carries in `x-goog-user-project`.
+    #[must_use]
+    pub fn quota_project(&self) -> Option<&str> {
+        self.inner.identity.quota_project()
     }
 
     fn of(identity: Identity, client: &str) -> Result<Self, Error> {
@@ -115,13 +237,7 @@ impl GoogleCloud {
     }
 
     async fn granted(&self, now: f64) -> Result<Granted, Error> {
-        match &self.inner.identity {
-            Identity::Key(key) => {
-                let assertion = key.assertion(now)?;
-                let form = [("assertion", assertion.as_str()), ("grant_type", JWT_GRANT)];
-                self.inner.sender.granted(&key.token_uri, &form, now).await
-            }
-        }
+        self.inner.identity.granted(&self.inner.sender, now).await
     }
 
     /// The identity as a replay of recorded cases drives it: every token
@@ -173,5 +289,7 @@ fn client_named(agent: HeaderValue, direct: bool) -> Result<reqwest::Client, Err
     builder.build().map_err(|_| Error::Configuration)
 }
 
+#[cfg(test)]
+mod adc_tests;
 #[cfg(test)]
 mod tests;

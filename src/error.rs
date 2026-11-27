@@ -49,6 +49,15 @@ pub enum Error {
     /// Google did not grant the scope required for Gemini API calls.
     #[error("Authorize Google Cloud API access to use Gemini")]
     GoogleScopeRequired,
+    /// No Google Cloud credentials were found: no key, no Application
+    /// Default Credentials file, and no metadata server.
+    #[error(
+        "No Google Cloud credentials were found; set GOOGLE_APPLICATION_CREDENTIALS or sign in with gcloud"
+    )]
+    NoCredentials,
+    /// The Google Cloud credentials found are of a kind not taken yet.
+    #[error("These Google Cloud credentials are of a kind not supported yet")]
+    Unsupported,
     /// Identity was granted but plan usage was not.
     #[error("ChatGPT plan usage is not enabled for this account; sign in to authorize it")]
     PlanUsageRequired,

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `GoogleCloud::application_default` finds Application Default Credentials as google-auth
+  finds them: a key, a user's credentials, a borrowed account, or the metadata server;
+  `borrowing` borrows a service account. External accounts are not taken yet.
+
 - `GoogleCloud`, behind the `google-cloud` feature: the identity of a service-account
   key for a server process, and a renewed token for the `cloud-platform` scope. The
   account sign-in is the default `accounts` feature.

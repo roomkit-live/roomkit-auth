@@ -48,8 +48,11 @@ and grant the user permission to consume its services. See Google's
 The `google-cloud` feature gives the identity a server process calls Google
 Cloud APIs as, such as Gemini on Vertex AI, with no browser and no storage:
 `GoogleCloud::service_account(contents, client)` reads a service-account key
-file's contents, and `access_token()` returns a token for the
-`cloud-platform` scope. The key signs an assertion that Google's token
+file's contents, `GoogleCloud::application_default(client)` finds
+Application Default Credentials as google-auth finds them (the file
+`GOOGLE_APPLICATION_CREDENTIALS` names, gcloud's file, the metadata server),
+`borrowing(email)` borrows a service account with either, and
+`access_token()` returns a token for the `cloud-platform` scope. The key signs an assertion that Google's token
 endpoint exchanges for the token, which is kept until shortly before it
 expires. This follows Google's
 [OAuth 2.0 for server to server applications](https://developers.google.com/identity/protocols/oauth2/service-account)

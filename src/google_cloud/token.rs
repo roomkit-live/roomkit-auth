@@ -101,7 +101,7 @@ pub(super) struct Sender {
 
 impl Sender {
     /// The URL `url` is sent to: itself, or the replay's origin.
-    fn target(&self, url: &str) -> Result<reqwest::Url, Error> {
+    pub(super) fn target(&self, url: &str) -> Result<reqwest::Url, Error> {
         let mut target = reqwest::Url::parse(url).map_err(|_| Error::Configuration)?;
         if let Some(origin) = &self.origin {
             let path = target.path().to_owned();
@@ -150,7 +150,7 @@ impl Sender {
 
 /// The wait google-auth takes before a try: `wait`, less up to a tenth of
 /// it, drawn at random (google-auth draws within a tenth either side).
-fn jittered(wait: f64) -> Duration {
+pub(super) fn jittered(wait: f64) -> Duration {
     let mut drawn = [0; 1];
     let less = SystemRandom::new()
         .fill(&mut drawn)
@@ -173,7 +173,7 @@ fn passing(status: u16, body: &[u8]) -> bool {
 }
 
 /// The token the answer `body` grants at `now`.
-fn read(body: &[u8], now: f64) -> Result<Granted, Error> {
+pub(super) fn read(body: &[u8], now: f64) -> Result<Granted, Error> {
     let answer: Answer = serde_json::from_slice(body).map_err(|_| Error::Protocol)?;
     let lifetime = match answer.expires_in {
         None | Some(Value::Null) => None,
@@ -194,7 +194,7 @@ fn read(body: &[u8], now: f64) -> Result<Granted, Error> {
 }
 
 /// The body of `answer`, at most [`ANSWER_LIMIT`] bytes of it.
-async fn bounded(mut answer: reqwest::Response) -> Result<Vec<u8>, Error> {
+pub(super) async fn bounded(mut answer: reqwest::Response) -> Result<Vec<u8>, Error> {
     let mut body = Vec::new();
     while let Some(chunk) = answer.chunk().await.map_err(|_| Error::Network)? {
         if body.len() + chunk.len() > ANSWER_LIMIT {
