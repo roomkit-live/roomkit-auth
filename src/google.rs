@@ -178,14 +178,24 @@ impl Google {
     /// Revoke the grant at Google and clear local tokens even if revocation
     /// could not be confirmed. The account remains available for reauthorization.
     pub async fn sign_out(&self, account: &str) -> Result<SignOut, Error> {
+        self.revoke(account, false).await
+    }
+
+    /// Revoke the grant and forget this registration, including its display
+    /// label. A later sign-in for the same subject receives a new local ID.
+    pub async fn remove_account(&self, account: &str) -> Result<SignOut, Error> {
+        self.revoke(account, true).await
+    }
+
+    async fn revoke(&self, account: &str, remove: bool) -> Result<SignOut, Error> {
         let auth = self.clone();
         let id = account.to_owned();
-        tokio::spawn(async move { auth.disconnect(&id).await })
+        tokio::spawn(async move { auth.disconnect(&id, remove).await })
             .await
             .map_err(|_| Error::Cancelled)?
     }
 
-    async fn disconnect(&self, id: &str) -> Result<SignOut, Error> {
+    async fn disconnect(&self, id: &str, remove: bool) -> Result<SignOut, Error> {
         let inner = &self.0;
         let _lease = inner.store.lock().await?;
         let mut data = inner.store.read()?;
@@ -205,8 +215,12 @@ impl Google {
         } else {
             Ok(())
         };
-        record.tokens = None;
-        record.revision = uuid::Uuid::new_v4().to_string();
+        if remove {
+            data.accounts.remove(id);
+        } else {
+            record.tokens = None;
+            record.revision = uuid::Uuid::new_v4().to_string();
+        }
         inner.store.write(&data)?;
         Ok(if result.is_ok() {
             SignOut::Revoked

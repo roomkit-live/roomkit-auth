@@ -88,9 +88,42 @@ async fn google_refreshes_once_and_revokes_the_rotated_grant() {
     assert_eq!(a.unwrap().expose_secret(), "access-rotated");
     assert_eq!(b.unwrap().expose_secret(), "access-rotated");
     assert_eq!(f.peer.refreshes.load(Ordering::SeqCst), 1);
-    assert_eq!(google.sign_out(&id).await.unwrap(), SignOut::Revoked);
+    assert_eq!(google.remove_account(&id).await.unwrap(), SignOut::Revoked);
+    assert!(google.accounts().unwrap().is_empty());
     assert_eq!(
         f.peer.wire.lock().unwrap().forms.last().unwrap()["token"],
         "refresh-rotated"
     );
+}
+
+#[tokio::test]
+async fn google_accepts_the_browser_redirect_on_the_loopback_root() {
+    let f = Fixture::new().await;
+    let google = Google::fixture(f._directory.path(), &f.peer.issuer).unwrap();
+    let attempt = google.sign_in(None).await.unwrap();
+    let response = f.browser.get(attempt.url().clone()).send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::FOUND);
+    let location = url::Url::parse(response.headers()["location"].to_str().unwrap()).unwrap();
+    let query: BTreeMap<String, String> = location.query_pairs().into_owned().collect();
+    let mut callback = url::Url::parse(&query["redirect_uri"]).unwrap();
+    assert_eq!(callback.path(), "/");
+    callback
+        .query_pairs_mut()
+        .append_pair("state", &query["state"])
+        .append_pair("code", "fixture");
+    {
+        let mut wire = f.peer.wire.lock().unwrap();
+        wire.scope = Some(CLOUD.into());
+        wire.queries.push(query);
+    }
+    assert!(
+        f.browser
+            .get(callback)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+    );
+    assert!(attempt.wait().await.unwrap().connected);
 }

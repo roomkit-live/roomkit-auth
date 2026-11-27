@@ -43,7 +43,7 @@ pub enum Error {
     #[error("This account needs to sign in again")]
     SignInRequired,
     /// The directory holds the maximum number of accounts. Signing out keeps an
-    /// account; [`ChatGpt::remove_account`](crate::ChatGpt::remove_account) frees its place.
+    /// account. Use the account manager's `remove_account` method to free its place.
     #[error("Too many saved accounts; remove one and try again")]
     AccountLimit,
     /// Google did not grant the scope required for Gemini API calls.
