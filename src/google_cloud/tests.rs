@@ -10,7 +10,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::{Router, extract::State, http::StatusCode, response::IntoResponse, routing::post};
-use base64::{Engine, engine::general_purpose::STANDARD};
+use base64::{
+    Engine,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use serde_json::{Value, json};
 
 use super::*;
@@ -78,6 +81,18 @@ struct Replayed {
 }
 
 async fn replayed(key: &str, answers: Vec<(StatusCode, Value)>) -> Replayed {
+    replayed_as(key, answers, None).await
+}
+
+async fn replayed_borrowing(key: &str, answers: Vec<(StatusCode, Value)>) -> Replayed {
+    replayed_as(key, answers, Some("runner@proj-1.iam.gserviceaccount.com")).await
+}
+
+async fn replayed_as(
+    key: &str,
+    answers: Vec<(StatusCode, Value)>,
+    borrowing: Option<&str>,
+) -> Replayed {
     let endpoint = Endpoint::default();
     endpoint.answers.lock().unwrap().extend(
         answers
@@ -86,6 +101,7 @@ async fn replayed(key: &str, answers: Vec<(StatusCode, Value)>) -> Replayed {
     );
     let app = Router::new()
         .route("/token", post(answered))
+        .route("/v1/projects/-/serviceAccounts/{target}", post(answered))
         .with_state(endpoint.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -101,6 +117,10 @@ async fn replayed(key: &str, answers: Vec<(StatusCode, Value)>) -> Replayed {
         }),
     };
     let identity = GoogleCloud::service_account(key, "fixture-client/1").unwrap();
+    let identity = match borrowing {
+        Some(target) => identity.borrowing(target).unwrap(),
+        None => identity,
+    };
     let identity = identity.replaying(&origin, pace).unwrap();
     Replayed {
         identity,
@@ -258,4 +278,22 @@ fn a_replay_s_pace_is_named_from_outside_the_crate() {
     };
     let identity = GoogleCloud::service_account(&key_file(None), "fixture-client/1").unwrap();
     assert!(identity.replaying("http://127.0.0.1:9", pace).is_ok());
+}
+
+// google-auth: impersonated_credentials.Credentials gives its source, when
+// it is scoped (a service account), the IAM scope.
+#[tokio::test]
+async fn a_key_that_borrows_an_account_asks_its_own_token_for_the_iam_scope() {
+    let lent = json!({"accessToken": "lent-1", "expireTime": "2026-01-01T01:00:00Z"});
+    let answers = vec![granted("t-1", 3599.into()), (StatusCode::OK, lent)];
+    let run = replayed_borrowing(&key_file(None), answers).await;
+    assert_eq!(
+        run.identity.access_token().await.unwrap().expose_secret(),
+        "lent-1"
+    );
+    let posted = run.endpoint.posted.lock().unwrap().clone();
+    let assertion = form(&posted[0].1)[0].1.clone();
+    let claims = assertion.split('.').nth(1).unwrap();
+    let claims: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(claims).unwrap()).unwrap();
+    assert_eq!(claims["scope"], key::IAM_SCOPE);
 }

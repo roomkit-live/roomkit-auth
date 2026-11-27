@@ -92,16 +92,18 @@ enum Identity {
 }
 
 impl Identity {
-    /// A token of the identity, at `now`.
+    /// A token of the identity for `scope`, where the scope is its own to
+    /// choose (a user's credentials keep theirs), at `now`.
     fn granted<'a>(
         &'a self,
         sender: &'a Sender,
         now: f64,
+        scope: &'a str,
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<Granted, Error>> + Send + 'a>> {
         Box::pin(async move {
             match self {
                 Self::Key(key) => {
-                    let assertion = key.assertion(now)?;
+                    let assertion = key.assertion(now, scope)?;
                     let form = [("assertion", assertion.as_str()), ("grant_type", JWT_GRANT)];
                     sender.granted(&key.token_uri, &form, now).await
                 }
@@ -109,10 +111,11 @@ impl Identity {
                 Self::Borrowed {
                     source, borrowing, ..
                 } => {
-                    let lent = source.granted(sender, now).await?;
+                    // The borrower's own token is asked for the IAM scope.
+                    let lent = source.granted(sender, now, key::IAM_SCOPE).await?;
                     borrowing.granted(sender, &lent.token).await
                 }
-                Self::Machine(machine) => machine.granted(sender, now).await,
+                Self::Machine(machine) => machine.granted(sender, now, scope).await,
                 Self::Unresolved(error) => Err(*error),
             }
         })
@@ -237,7 +240,8 @@ impl GoogleCloud {
     }
 
     async fn granted(&self, now: f64) -> Result<Granted, Error> {
-        self.inner.identity.granted(&self.inner.sender, now).await
+        let identity = &self.inner.identity;
+        identity.granted(&self.inner.sender, now, key::SCOPE).await
     }
 
     /// The identity as a replay of recorded cases drives it: every token

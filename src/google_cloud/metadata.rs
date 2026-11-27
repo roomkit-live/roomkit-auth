@@ -17,7 +17,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use super::environment::Environment;
-use super::key::SCOPE;
 use super::token::{Granted, Sender, bounded, jittered, read};
 use crate::Error;
 
@@ -73,13 +72,18 @@ impl Machine {
         }
     }
 
-    /// A token of the machine's account, at `now`.
+    /// A token of the machine's account for `scope`, at `now`.
     ///
     /// # Errors
     ///
     /// [`Error::NoCredentials`] where the machine is none; what a request
     /// to its server fails with.
-    pub(super) async fn granted(&self, sender: &Sender, now: f64) -> Result<Granted, Error> {
+    pub(super) async fn granted(
+        &self,
+        sender: &Sender,
+        now: f64,
+        scope: &str,
+    ) -> Result<Granted, Error> {
         if !self.found.load(Ordering::Acquire) {
             if self.unchecked || !(self.pinged(sender).await || self.google_product) {
                 return Err(Error::NoCredentials);
@@ -93,7 +97,7 @@ impl Machine {
             self.found.store(true, Ordering::Release);
         }
         let token = "instance/service-accounts/default/token";
-        let body = self.asked(sender, token, Some(("scopes", SCOPE))).await?;
+        let body = self.asked(sender, token, Some(("scopes", scope))).await?;
         read(&body, now)
     }
 

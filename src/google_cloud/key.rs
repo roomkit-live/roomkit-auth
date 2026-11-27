@@ -22,6 +22,11 @@ use crate::Error;
 /// The scope every token is asked for: the only one Vertex AI takes.
 pub(super) const SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
 
+/// The scope the token of an identity that borrows a service account is
+/// asked for, where its scope is its own to choose (google-auth's
+/// `iam._IAM_SCOPE`).
+pub(super) const IAM_SCOPE: &str = "https://www.googleapis.com/auth/iam";
+
 /// The audience of every assertion: Google's token endpoint.
 const AUDIENCE: &str = "https://oauth2.googleapis.com/token";
 
@@ -79,12 +84,13 @@ impl Key {
         })
     }
 
-    /// The assertion the key signs at `now`, in seconds since 1970.
+    /// The assertion the key signs at `now`, in seconds since 1970, for
+    /// `scope`.
     ///
     /// # Errors
     ///
     /// [`Error::Configuration`] when the key cannot sign.
-    pub(super) fn assertion(&self, now: f64) -> Result<String, Error> {
+    pub(super) fn assertion(&self, now: f64, scope: &str) -> Result<String, Error> {
         let mut header = vec![("typ", Member::Text("JWT")), ("alg", Member::Text("RS256"))];
         if let Some(key_id) = &self.key_id {
             header.push(("kid", Member::Text(key_id)));
@@ -97,7 +103,7 @@ impl Key {
             ("exp", Member::Number(issued.saturating_add(LIFETIME))),
             ("iss", Member::Text(&self.email)),
             ("aud", Member::Text(AUDIENCE)),
-            ("scope", Member::Text(SCOPE)),
+            ("scope", Member::Text(scope)),
         ];
         let signed = format!(
             "{}.{}",
